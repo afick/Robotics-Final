@@ -61,11 +61,29 @@ def main():
     points = [[round(i), round(j)] for [i, j] in points]
     
     # print(points)
-    
-    # Create adjacency matrix.
-    adjacency_matrix = [[len(bfs(data, (points[i][0], points[i][1]), (points[j][0], points[j][1]))) - 1 for j in range(len(points))] for i in range(len(points))]
 
-    print(adjacency_matrix)
+    # # # # #
+
+    shortest_path = [[0 for _ in range(1000)] for _ in range(1000)]
+
+    for i in range(len(points)):
+        for j in range(len(points)):
+            if i != j:
+                new_path = bfs(data, (points[i][0], points[i][1]), (points[j][0], points[j][1]))
+
+                if len(new_path) < len(shortest_path):
+                    shortest_path = new_path
+    
+    print("Shortest Path: ")
+    print(shortest_path)
+    print("Length: " + str(len(shortest_path) - 1))
+
+    # # # # #
+
+    # Create adjacency matrix.
+    # adjacency_matrix = [[len(bfs(data, (points[i][0], points[i][1]), (points[j][0], points[j][1]))) - 1 for j in range(len(points))] for i in range(len(points))]
+
+    # print(adjacency_matrix)
 
 if __name__ == "__main__":
     """Run the main function."""
