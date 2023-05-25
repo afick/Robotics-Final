@@ -84,7 +84,7 @@ def expand_boundaries(robot_size, grid):
         # Initialize a map of the same size that can be fully explored 
         binary_map = [[False for i in range(cols)] for j in range(rows)]
         # Calculate the expansion factor
-        expand = int(ROBOT_SIZE // self.resolution) + SLACK
+        expand = int(robot_size // self.resolution) + SLACK
 
         # Iterate through each cell
         for r in range(rows):
