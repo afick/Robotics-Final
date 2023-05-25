@@ -65,12 +65,43 @@ class Pa4:
         self.map.info.origin.position.y = -HEIGHT / 2 * self.resolution
         self.map.data = [-1] * self.width * self.height
 
+
+        # PID controller variables
+        self.kp = 0.5   # Proportional gain
+        self.ki = 0.0   # Integral gain
+        self.kd = 0.1   # Derivative gain
+
+        self.target_distance = 0.5   # Desired distance from obstacles
+
+        self.current_distance = 0.0
+        self.previous_error = 0.0
+        self.integral = 0.0
+
         # Time for checking occupancy grid, only want to update based on update rate to not overload the system
         self.last_time = rospy.get_rostime()
         
     def laser_callback(self, msg):
         """Callback function which is called when a new message of type LaserScan is received by the subscriber."""
         self.laser_msg = msg
+
+        current_distance = min(msg.ranges)
+
+        error = self.target_distance - self.current_distance
+        proportional = self.kp * error
+        integral += self.ki * error
+        derivative = self.kd * (error - self.previous_error)
+
+        control_signal = proportional + integral + derivative
+
+        self.previous_error = error
+
+        # Create a Twist message to control the robot's movement
+        cmd_vel_msg = Twist()
+        cmd_vel_msg.linear.x = 0.5   # Set linear velocity
+        cmd_vel_msg.angular.z = control_signal   # Set angular velocity based on control signal
+
+        # Publish the Twist message to control the robot's movement
+        self.cmd_vel_pub.publish(cmd_vel_msg)
         
         # Update the OccupancyGrid map based on update rate
         if rospy.get_rostime() - self.last_time > rospy.Duration(UPDATE_RATE):
