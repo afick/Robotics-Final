@@ -84,7 +84,7 @@ def expand_boundaries(robot_size, grid):
         # Initialize a map of the same size that can be fully explored 
         binary_map = [[False for i in range(cols)] for j in range(rows)]
         # Calculate the expansion factor
-        # expand = int(ROBOT_SIZE // self.resolution) + SLACK
+        expand = int(ROBOT_SIZE // self.resolution) + SLACK
 
         # Iterate through each cell
         for r in range(rows):
@@ -93,15 +93,15 @@ def expand_boundaries(robot_size, grid):
                 if grid[r][c] != 0: 
                     # Mark this cell as not explorable, and expand this by the appropriate factor
                     binary_map[r][c] = True
-                    # for v in range(1, expand+1):
-                    #     if r-v >= 0:
-                    #         binary_map[r-v][c] = True
-                    #     if r+v < self.rows:
-                    #         binary_map[r+v][c] = True
-                    #     if c-v >= 0:
-                    #         binary_map[r][c-v] = True
-                    #     if c+v < self.cols:
-                    #         binary_map[r][c+v] = True
+                    for v in range(1, expand+1):
+                        if r-v >= 0:
+                            binary_map[r-v][c] = True
+                        if r+v < rows:
+                            binary_map[r+v][c] = True
+                        if c-v >= 0:
+                            binary_map[r][c-v] = True
+                        if c+v < cols:
+                            binary_map[r][c+v] = True
                         
         return np.array(binary_map)
 
@@ -133,13 +133,10 @@ def find_bfs_path(grid, start, end):
         dRow = [-1, 0, 0, 1, 1, 1, -1, -1]
         dCol = [0, 1, -1, 0, 1, -1, -1, 1]
 
-        # Create matrix of cells that can and cannot be visited
-        visited = expand_boundaries(grid)
-
         # Check that the start and goal are reachable
-        if validate(end, visited) == False:
+        if validate(end, grid) == False:
             exit("goal in obstacle")
-        if validate(start, visited) == False:
+        if validate(start, grid) == False:
             exit("start in obstacle")
 
         # Establish queue of nodes we will explore
@@ -149,7 +146,7 @@ def find_bfs_path(grid, start, end):
         # Keep track of where a cell came from
         cell_pointers = {}
 
-        visited[start[0]][start[1]] = True
+        grid[start[0]][start[1]] = True
 
         # Iterate through the possible nodes
         while frontier.empty() == False:
@@ -161,8 +158,8 @@ def find_bfs_path(grid, start, end):
             # Add applicable of the 8 surrounding nodes, keep track of cell origins
             for i in range(len(dRow)):
                     next = (current[0] +  dCol[i], current[1] + dRow[i])
-                    if validate(next, visited):
-                        visited[next[0]][next[1]] = True
+                    if validate(next, grid):
+                        grid[next[0]][next[1]] = True
                         frontier.put(next)
                         cell_pointers[next] = current
 
@@ -183,8 +180,10 @@ def calc_distances(targets, grid):
     '''
     adjacency = np.zeros((len(targets) +1, len(targets) +1))
     indices = [i for i in range(len(targets))]
+    binary_map = expand_boundaries(grid)
     for start, end in list(itertools.combinations(indices, 2)):
-        length = find_bfs_path(grid, targets[start], targets[end])
+        map_use = binary_map.copy()
+        length = find_bfs_path(map_use, targets[start], targets[end])
         adjacency[start][end], adjacency[end][start] = length, length
     return adjacency
 
