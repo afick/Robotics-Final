@@ -6,7 +6,7 @@ import queue
 import math
 
 RESOLUTION = 1
-SLACK = 1
+SLACK = 0
 ROBOT = 0
 
 def held_karp(dists):
@@ -191,6 +191,75 @@ def find_bfs_path(grid, start, end):
 
         return dist, solution
 
+def find_a_star_path(grid, start, end):
+    '''
+    Function to find a path from the provided start and end using A*
+    '''
+    # 8 Possible row and column movements
+    dRow = [-1, 0, 0, 1, 1, 1, -1, -1]
+    dCol = [0, 1, -1, 0, 1, -1, -1, 1]
+
+    # Check that the start and goal are reachable
+    if validate(end, grid) == False:
+        exit("goal in obstacle")
+    if validate(start, grid) == False:
+        exit("start in obstacle")
+
+    # Establish priority queue of nodes we will explore
+    frontier = queue.PriorityQueue()
+    frontier.put((0, start))  # Add start node with priority 0
+
+    # Keep track of where a cell came from
+    cell_pointers = {}
+
+    # Keep track of the cost of reaching each node from the start
+    costs = {start: 0}
+
+    # Iterate through the possible nodes
+    while not frontier.empty():
+        _, current = frontier.get()
+
+        if current == end:
+            break
+
+        # Add applicable of the 8 surrounding nodes, keep track of cell origins
+        for i in range(len(dRow)):
+            next = (current[0] + dCol[i], current[1] + dRow[i])
+            if validate(next, grid):
+                new_cost = costs[current] + distance(current, next)
+                if next not in costs or new_cost < costs[next]:
+                    costs[next] = new_cost
+                    priority = new_cost + heuristic(next, end)
+                    frontier.put((priority, next))
+                    cell_pointers[next] = current
+
+    # Backtrack through cell connections to find path
+    solution = []  # Stores the path between the nodes
+    dist = costs[end]  # Distance is the cost of reaching the end node
+    node = end
+    solution.append(node)
+    node = cell_pointers[node]
+    while node != start:
+        solution.append(node)
+        node = cell_pointers[node]
+    solution.append(start)
+    solution.reverse()
+
+    return dist, solution
+
+def distance(pos1, pos2):
+    '''
+    Function to calculate the distance between two positions using Manhattan distance
+    '''
+    return math.sqrt(abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1]))
+
+def heuristic(pos, goal):
+    '''
+    Heuristic function to estimate the cost of reaching the goal from a given position
+    In this case, we use the Manhattan distance as the heuristic.
+    '''
+    return distance(pos, goal)
+
 def calc_distances(targets, grid): 
     ''' 
     Function that creates adjacency matrix for the target nodes 
@@ -210,7 +279,7 @@ def calc_distances(targets, grid):
     for start, end in list(itertools.combinations(indices, 2)):
         map_use = binary_map.copy()
         # Find the bfs path and length between two spots
-        length, steps = find_bfs_path(map_use, targets[start], targets[end])
+        length, steps = find_a_star_path(map_use, targets[start], targets[end])
         # Store the sub paths and lengths
         paths[(targets[start], targets[end])] = steps
         paths[(targets[end], targets[start])] = steps[::-1]
