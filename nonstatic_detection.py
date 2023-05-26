@@ -5,9 +5,13 @@
 
 import numpy as np
 import math
+import time 
 
 import rospy
 import tf
+
+# For the purposes of running multiple robots concurrently
+import threading
 
 from nav_msgs.msg import OccupancyGrid
 from geometry_msgs.msg import Twist
@@ -27,20 +31,96 @@ WIDTH = 400
 THRESHOLD = 0.95 # threshold probability to declare a cell with an obstacle
 
 # Topic names
-DEFAULT_CMD_VEL_TOPIC = "cmd_vel"
-DEFAULT_ODOM_TOPIC = "odom"
-DEFAULT_SCAN_TOPIC = "scan" # use base_scan for the simulation
+DEFAULT_CMD_VEL_TOPIC = "robot_0/cmd_vel"
+DEFAULT_ODOM_TOPIC = "robot_0/odom"
+DEFAULT_SCAN_TOPIC = "robot_0/base_scan" # use scan for actual robot
 DEFAULT_MAP_TOPIC = "map"
+
+class NonstaticObstacle:
+
+    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY):
+
+        # Setting up velocity command publishers for an obstacle
+        self._cmd_pub = rospy.Publisher("robot_1/cmd_vel", Twist, queue_size=1)
+
+        self.linear_velocity = linear_velocity
+        self.angular_velocity = angular_velocity
+
+
+    def move(self, linear_vel, angular_vel):
+        """Send a velocity command (linear vel in m/s, angular vel in rad/s)."""
+        # Setting velocities
+        twist_msg = Twist()
+
+        twist_msg.linear.x = linear_vel
+        twist_msg.angular.z = angular_vel
+        self._cmd_pub.publish(twist_msg)
+
+    def translate(self, distance):
+        """Helper method that moves the nonstatic obstacle over a specified distance"""
+        rate = rospy.Rate(FREQUENCY)
+
+        time = distance/self.linear_velocity
+
+        # Translate for the desired amount of time
+        start_time = rospy.get_rostime()
+        while rospy.get_rostime() - start_time <= rospy.Duration(time):
+            self.move(self.linear_velocity, 0)
+            
+            rate.sleep()
+
+        self.stop()
+
+    def rotate(self, theta):
+        """Helper method that rotates the nonstatic obstacle theta radians"""
+    
+        rate = rospy.Rate(FREQUENCY)
+
+        time = abs(theta/self.angular_velocity)
+
+        # Rotate for the desired amount of time
+        start_time = rospy.get_rostime()
+        while rospy.get_rostime() - start_time <= rospy.Duration(time):
+            if theta >= 0:
+                self.move(0, self.angular_velocity)
+            else:
+                self.move(0, -self.angular_velocity)
+
+            rate.sleep()
+
+        self.stop()
+
+    def obstacle_motion(self):
+
+        while True:
+            self.translate(1)
+            self.rotate(math.pi)
+            self.translate(1)
+
+        """
+        time.sleep(3)
+        while not self.robot_done:
+            self.translate(1)]
+        """
+
+    def stop(self):
+        """Stop the robot."""
+        twist_msg = Twist()
+        self._cmd_pub.publish(twist_msg) 
+
 
 class NonstaticDetection:
 
     def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, resolution = RESOLUTION, width = WIDTH, height = HEIGHT, origin = ORIGIN, threshold = THRESHOLD):
 
-        # Setting up publishers and subscribers
+        # Setting up publishers and subscribers for robot 0
         self.map_pub = rospy.Publisher(DEFAULT_MAP_TOPIC, OccupancyGrid, queue_size=1)
         self._laser_sub = rospy.Subscriber(DEFAULT_SCAN_TOPIC, LaserScan, self._laser_callback, queue_size=1)
         self.odomSub = rospy.Subscriber(DEFAULT_ODOM_TOPIC, Odometry, self._odom_callback, queue_size=1)
         self._cmd_pub = rospy.Publisher(DEFAULT_CMD_VEL_TOPIC, Twist, queue_size=1)
+
+        # Set up the cmd vel publisher for robot 1
+        self._robot1 = rospy.Publisher("robot_1/cmd_vel", Twist, queue_size=1)
 
         # Initialize the map parameters
         self.resolution = resolution
@@ -59,7 +139,7 @@ class NonstaticDetection:
         self.map.data = [-1] * self.width * self.height
 
         # Initial publish
-        self.map_pub.publisher(self.map)
+        self.map_pub.publish(self.map)
 
         # Parameters
         self.linear_velocity = linear_velocity
@@ -87,7 +167,7 @@ class NonstaticDetection:
             index = endpoint[1] * self.width + endpoint[0]
             self.cell_history[index][1] += 1
 
-    def update_grid(self, ray, endpoint):
+    def update_grid(self):
 
         for i in range(len(self.cell_history)):
             if self.cell_history[i] != [0, 0]:
@@ -136,6 +216,8 @@ class NonstaticDetection:
                 self.update_history(points, (x_obstacle, y_obstacle))
 
                 self.update_grid()
+
+        self.map_pub.publish(self.map)
 
     def bresenham(self, x0, y0, x1, y1):
         """Raytracing algorithm"""
@@ -234,10 +316,84 @@ class NonstaticDetection:
         twist_msg.angular.z = angular_vel
         self._cmd_pub.publish(twist_msg)
 
+    def move_1(self, linear_vel, angular_vel):
+        """Sends velocity command for the nonstatic obstacle"""
+        twist_msg = Twist()
+
+        twist_msg.linear.x = linear_vel
+        twist_msg.angular.z = angular_vel
+        self._robot1.publish(twist_msg)
+
+    def translate_1(self, distance):
+        """Helper method that moves the nonstatic obstacle over a specified distance"""
+        rate = rospy.Rate(FREQUENCY)
+
+        time = distance/self.linear_velocity
+
+        # Translate for the desired amount of time
+        start_time = rospy.get_rostime()
+        while rospy.get_rostime() - start_time <= rospy.Duration(time):
+            self.move_1(self.linear_velocity, 0)
+            
+            rate.sleep()
+
+        self.stop_1()
+
+    def rotate_1(self, theta):
+        """Helper method that rotates the nonstatic obstacle theta radians"""
+    
+        rate = rospy.Rate(FREQUENCY)
+
+        time = abs(theta/self.angular_velocity)
+
+        # Rotate for the desired amount of time
+        start_time = rospy.get_rostime()
+        while rospy.get_rostime() - start_time <= rospy.Duration(time):
+            if theta >= 0:
+                self.move_1(0, self.angular_velocity)
+            else:
+                self.move_1(0, -self.angular_velocity)
+
+            rate.sleep()
+
+        self.stop_1()
+        
+    def obstacle_motion(self):
+
+        """
+        while not self.robot_done:
+            self.translate_1(1)
+            self.rotate_1(math.pi)
+            self.translate_1(1)
+
+        """
+        self.translate_1(1)
+
+    def robot_motion(self):
+
+        self.translate(1)
+        """
+        self.rotate(math.pi/2)
+        self.translate(1)
+        self.rotate(-math.pi/2)
+        self.translate(4.7)
+        self.rotate(math.pi/2)
+        self.translate(4)
+        self.rotate(math.pi/2)
+        self.translate(5)
+
+        """
+        # self.robot_done = True
+
     def stop(self):
         """Stop the robot."""
         twist_msg = Twist()
         self._cmd_pub.publish(twist_msg)   
+
+    def stop_1(self):
+        """Stop the nonstatic obstacle."""
+        twist_msg = Twist()
+        self._robot1.publish(twist_msg)
 
     def translate(self, distance):
         """Helper method that moves the robot over a specified distance"""
@@ -282,12 +438,14 @@ def main():
 
     # Initialization of the class for the path planner.
     nonstatic_detection = NonstaticDetection()
+    nonstatic_obstacle = NonstaticObstacle()
 
     # Sleep for a few seconds to wait for the registration.
     rospy.sleep(2)
 
     # If interrupted, send a stop command before interrupting.
     rospy.on_shutdown(nonstatic_detection.stop)
+    rospy.on_shutdown(nonstatic_obstacle.stop)
 
     try:
 
@@ -298,17 +456,26 @@ def main():
             continue
 
         """
+         # Simulation environment test (uncomment and run in PA3 test environment)
+        robot = threading.Thread(target=nonstatic_detection.robot_motion)
+        nonstatic = threading.Thread(target=nonstatic_obstacle.obstacle_motion)
+
+        robot.start()
+        nonstatic.start()
+
+        robot.join()
+        nonstatic.join()
 
         # Simulation environment test (uncomment and run in PA3 test environment)
-        nonstatic_detection.translate(1)
-        nonstatic_detection.rotate(math.pi/2)
-        nonstatic_detection.translate(1)
-        nonstatic_detection.rotate(-math.pi/2)
-        nonstatic_detection.translate(4.7)
-        nonstatic_detection.rotate(math.pi/2)
-        nonstatic_detection.translate(4)
-        nonstatic_detection.rotate(math.pi/2)
-        nonstatic_detection.translate(5)
+        # nonstatic_detection.translate(1)
+        # nonstatic_detection.rotate(math.pi/2)
+        # nonstatic_detection.translate(1)
+        # nonstatic_detection.rotate(-math.pi/2)
+        # nonstatic_detection.translate(4.7)
+        # nonstatic_detection.rotate(math.pi/2)
+        # nonstatic_detection.translate(4)
+        # nonstatic_detection.rotate(math.pi/2)
+        # nonstatic_detection.translate(5)
 
     except rospy.ROSInterruptException:
         rospy.logerr("ROS node interrupted.")
