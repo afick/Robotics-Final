@@ -6,7 +6,7 @@ import queue
 import math
 
 RESOLUTION = 1
-SLACK = 0
+SLACK = 1
 ROBOT = 0
 
 def held_karp(dists):
@@ -67,6 +67,8 @@ def held_karp(dists):
         new_bits = bits & ~(1 << parent)
         __, parent = C[(bits, parent)]
         bits = new_bits
+    
+    path.append(0)
 
     return opt, list(reversed(path))
 
@@ -168,14 +170,12 @@ def find_bfs_path(grid, start, end):
                         cell_pointers[next] = current
 
         # Backtrack through cell connections to find path
-        solution = [] 
-        dist = 0 
+        solution = [] # Stores the path between the nodes
+        dist = 0 # Stores the distance between the nodes based on each step to get there
         node = end
-
         solution.append(node)
         node = cell_pointers[node]
         while node != start:
-            print(node)
             step = abs(solution[-1][0] - node[0]) + abs(solution[-1][1] - node[1])
             if step == 2:
                 step = math.sqrt(2)
@@ -188,34 +188,60 @@ def find_bfs_path(grid, start, end):
             step = math.sqrt(2)
         dist += step
         solution.reverse()
-        print(solution)
-        return dist
+
+        return dist, solution
 
 def calc_distances(targets, grid): 
     ''' 
     Function that creates adjacency matrix for the target nodes 
     based on the occupancy grid, using A* to find the shortest distance between each node.
     '''
-    targets.insert(0, (0,0))
+    targets.insert(0, (0,0)) ## TODO: Replace with current pos.
+    # Initialize empty adjacency matrix
     adjacency = np.zeros((len(targets), len(targets)))
     indices = [i for i in range(len(targets))]
+    # Create map of reachable and unreachable positions
     binary_map = expand_boundaries(ROBOT, grid)
+    # Store the paths between two positions
+    paths = {}
     print(binary_map)
+
+    # Go through all possible combinations of 2 targets
     for start, end in list(itertools.combinations(indices, 2)):
         map_use = binary_map.copy()
-        length = find_bfs_path(map_use, targets[start], targets[end])
-        print(length)
+        # Find the bfs path and length between two spots
+        length, steps = find_bfs_path(map_use, targets[start], targets[end])
+        # Store the sub paths and lengths
+        paths[(targets[start], targets[end])] = steps
+        paths[(targets[end], targets[start])] = steps[::-1]
         adjacency[start][end], adjacency[end][start] = length, length
-    return adjacency
+
+    return adjacency, paths
 
 def determine_sequence(targets, grid):
-    dists = calc_distances(targets, grid)
-    print(dists)
+    '''
+    Function to determine the sequence in which to visit the targets
+    '''
+    # Assemble the distance adjacency matrix, and store the paths between individual targets
+    dists, subpaths = calc_distances(targets, grid)
 
+    # Perform held_karp algorithm to minimize total distance
     time, path = held_karp(dists)
-    return time, path
+
+    # Put together the full path by combining 
+    # the sub paths between the individual targets
+    total_path = []
+    for i in range(len(path) - 1):
+        start = path[i]
+        end = path[i+1]
+        total_path.append(subpaths[(targets[start], targets[end])])
+
+    return time, path, total_path
 
 def read_distances(filename):
+    '''
+    Function to read adjacency graph from a csv
+    '''
     dists = []
     with open(filename, 'rb') as f:
         for line in f:
@@ -227,8 +253,7 @@ def read_distances(filename):
     return dists
 
 
-if __name__ == '__main__':
-
+def unit_test():
     grid = [[0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 1, 0, 0, 0],
@@ -237,12 +262,12 @@ if __name__ == '__main__':
             [0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 0, 0, 0, 0]]
     
+    print(determine_sequence([(5,5), (6,6), (1,1)], grid))
 
-    
-    print(determine_sequence([(1,0), (6,6), (2,2)], grid))
+if __name__ == '__main__':
 
-    # print(find_bfs_path(expand_boundaries(ROBOT, grid), (0,0), (5,2)))
-# 
+    unit_test()
+
     # arg = sys.argv[1]
 
 
