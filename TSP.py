@@ -2,8 +2,12 @@ import itertools
 import random
 import sys
 import numpy as np
-import Queue
+import queue
+import math
 
+RESOLUTION = 1
+SLACK = 0
+ROBOT = 0
 
 def held_karp(dists):
     """
@@ -84,7 +88,7 @@ def expand_boundaries(robot_size, grid):
         # Initialize a map of the same size that can be fully explored 
         binary_map = [[False for i in range(cols)] for j in range(rows)]
         # Calculate the expansion factor
-        expand = int(robot_size // self.resolution) + SLACK
+        expand = int(robot_size // RESOLUTION) + SLACK
 
         # Iterate through each cell
         for r in range(rows):
@@ -109,8 +113,8 @@ def validate(cell, visited):
     '''
     Function to validate if a cell can be visited
     '''
-    row = cell[1]
-    col = cell[0]
+    row = cell[0]
+    col = cell[1]
     rows = len(visited)
     cols = len(visited[0])
 
@@ -140,7 +144,7 @@ def find_bfs_path(grid, start, end):
             exit("start in obstacle")
 
         # Establish queue of nodes we will explore
-        frontier = Queue.Queue()
+        frontier = queue.Queue()
         frontier.put(start)
 
         # Keep track of where a cell came from
@@ -165,33 +169,51 @@ def find_bfs_path(grid, start, end):
 
         # Backtrack through cell connections to find path
         solution = [] 
+        dist = 0 
         node = end
+
+        solution.append(node)
+        node = cell_pointers[node]
         while node != start:
+            print(node)
+            step = abs(solution[-1][0] - node[0]) + abs(solution[-1][1] - node[1])
+            if step == 2:
+                step = math.sqrt(2)
+            dist += step
             solution.append(node)
             node = cell_pointers[node]
         solution.append(start)
+        step = abs(solution[-2][0] - node[0]) + abs(solution[-2][1] - node[1])
+        if step == 2:
+            step = math.sqrt(2)
+        dist += step
         solution.reverse()
-        return solution
+        print(solution)
+        return dist
 
 def calc_distances(targets, grid): 
     ''' 
     Function that creates adjacency matrix for the target nodes 
     based on the occupancy grid, using A* to find the shortest distance between each node.
     '''
-    adjacency = np.zeros((len(targets) +1, len(targets) +1))
+    targets.insert(0, (0,0))
+    adjacency = np.zeros((len(targets), len(targets)))
     indices = [i for i in range(len(targets))]
-    binary_map = expand_boundaries(grid)
+    binary_map = expand_boundaries(ROBOT, grid)
+    print(binary_map)
     for start, end in list(itertools.combinations(indices, 2)):
         map_use = binary_map.copy()
         length = find_bfs_path(map_use, targets[start], targets[end])
+        print(length)
         adjacency[start][end], adjacency[end][start] = length, length
     return adjacency
 
 def determine_sequence(targets, grid):
     dists = calc_distances(targets, grid)
+    print(dists)
 
     time, path = held_karp(dists)
-    return path
+    return time, path
 
 def read_distances(filename):
     dists = []
@@ -206,17 +228,33 @@ def read_distances(filename):
 
 
 if __name__ == '__main__':
-    arg = sys.argv[1]
 
-    if arg.endswith('.csv'):
-        dists = read_distances(arg)
-    else:
-        dists = generate_distances(int(arg))
+    grid = [[0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 1, 1, 1, 0, 0],
+            [0, 0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0]]
+    
 
-    # Pretty-print the distance matrix
-    for row in dists:
-        print(''.join([str(n).rjust(4, ' ') for n in row]))
+    
+    print(determine_sequence([(1,0), (6,6), (2,2)], grid))
 
-    print('')
+    # print(find_bfs_path(expand_boundaries(ROBOT, grid), (0,0), (5,2)))
+# 
+    # arg = sys.argv[1]
 
-    print(held_karp(dists))
+
+    # if arg.endswith('.csv'):
+    #     dists = read_distances(arg)
+    # else:
+    #     dists = generate_distances(int(arg))
+
+    # # Pretty-print the distance matrix
+    # for row in dists:
+    #     print(''.join([str(n).rjust(4, ' ') for n in row]))
+
+    # print('')
+
+    # print(held_karp(dists))
