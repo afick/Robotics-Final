@@ -2,8 +2,12 @@ import itertools
 import random
 import sys
 import numpy as np
-import Queue
+import queue
+import math
 
+RESOLUTION = 1
+SLACK = 0
+ROBOT = 0
 
 def held_karp(dists):
     """
@@ -63,6 +67,8 @@ def held_karp(dists):
         new_bits = bits & ~(1 << parent)
         __, parent = C[(bits, parent)]
         bits = new_bits
+    
+    path.append(0)
 
     return opt, list(reversed(path))
 
@@ -84,7 +90,7 @@ def expand_boundaries(robot_size, grid):
         # Initialize a map of the same size that can be fully explored 
         binary_map = [[False for i in range(cols)] for j in range(rows)]
         # Calculate the expansion factor
-        expand = int(robot_size // self.resolution) + SLACK
+        expand = int(robot_size // RESOLUTION) + SLACK
 
         # Iterate through each cell
         for r in range(rows):
@@ -109,8 +115,8 @@ def validate(cell, visited):
     '''
     Function to validate if a cell can be visited
     '''
-    row = cell[1]
-    col = cell[0]
+    row = cell[0]
+    col = cell[1]
     rows = len(visited)
     cols = len(visited[0])
 
@@ -140,7 +146,7 @@ def find_bfs_path(grid, start, end):
             exit("start in obstacle")
 
         # Establish queue of nodes we will explore
-        frontier = Queue.Queue()
+        frontier = queue.Queue()
         frontier.put(start)
 
         # Keep track of where a cell came from
@@ -164,36 +170,147 @@ def find_bfs_path(grid, start, end):
                         cell_pointers[next] = current
 
         # Backtrack through cell connections to find path
-        solution = [] 
+        solution = [] # Stores the path between the nodes
+        dist = 0 # Stores the distance between the nodes based on each step to get there
         node = end
+        solution.append(node)
+        node = cell_pointers[node]
         while node != start:
+            step = abs(solution[-1][0] - node[0]) + abs(solution[-1][1] - node[1])
+            if step == 2:
+                step = math.sqrt(2)
+            dist += step
             solution.append(node)
             node = cell_pointers[node]
         solution.append(start)
+        step = abs(solution[-2][0] - node[0]) + abs(solution[-2][1] - node[1])
+        if step == 2:
+            step = math.sqrt(2)
+        dist += step
         solution.reverse()
-        return solution
+
+        return dist, solution
+
+def find_a_star_path(grid, start, end):
+    '''
+    Function to find a path from the provided start and end using A*
+    '''
+    # 8 Possible row and column movements
+    dRow = [-1, 0, 0, 1, 1, 1, -1, -1]
+    dCol = [0, 1, -1, 0, 1, -1, -1, 1]
+
+    # Check that the start and goal are reachable
+    if validate(end, grid) == False:
+        exit("goal in obstacle")
+    if validate(start, grid) == False:
+        exit("start in obstacle")
+
+    # Establish priority queue of nodes we will explore
+    frontier = queue.PriorityQueue()
+    frontier.put((0, start))  # Add start node with priority 0
+
+    # Keep track of where a cell came from
+    cell_pointers = {}
+
+    # Keep track of the cost of reaching each node from the start
+    costs = {start: 0}
+
+    # Iterate through the possible nodes
+    while not frontier.empty():
+        _, current = frontier.get()
+
+        if current == end:
+            break
+
+        # Add applicable of the 8 surrounding nodes, keep track of cell origins
+        for i in range(len(dRow)):
+            next = (current[0] + dCol[i], current[1] + dRow[i])
+            if validate(next, grid):
+                new_cost = costs[current] + distance(current, next)
+                if next not in costs or new_cost < costs[next]:
+                    costs[next] = new_cost
+                    priority = new_cost + heuristic(next, end)
+                    frontier.put((priority, next))
+                    cell_pointers[next] = current
+
+    # Backtrack through cell connections to find path
+    solution = []  # Stores the path between the nodes
+    dist = costs[end]  # Distance is the cost of reaching the end node
+    node = end
+    solution.append(node)
+    node = cell_pointers[node]
+    while node != start:
+        solution.append(node)
+        node = cell_pointers[node]
+    solution.append(start)
+    solution.reverse()
+
+    return dist, solution
+
+def distance(pos1, pos2):
+    '''
+    Function to calculate the distance between two positions using Manhattan distance
+    '''
+    return math.sqrt(abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1]))
+
+def heuristic(pos, goal):
+    '''
+    Heuristic function to estimate the cost of reaching the goal from a given position
+    In this case, we use the Manhattan distance as the heuristic.
+    '''
+    return distance(pos, goal)
 
 def calc_distances(targets, grid): 
     ''' 
     Function that creates adjacency matrix for the target nodes 
     based on the occupancy grid, using A* to find the shortest distance between each node.
     '''
-    adjacency = np.zeros((len(targets) +1, len(targets) +1))
+    targets.insert(0, (0,0)) ## TODO: Replace with current pos.
+    # Initialize empty adjacency matrix
+    adjacency = np.zeros((len(targets), len(targets)))
     indices = [i for i in range(len(targets))]
-    binary_map = expand_boundaries(grid)
+    # Create map of reachable and unreachable positions
+    binary_map = expand_boundaries(ROBOT, grid)
+    # Store the paths between two positions
+    paths = {}
+    print(binary_map)
+
+    # Go through all possible combinations of 2 targets
     for start, end in list(itertools.combinations(indices, 2)):
         map_use = binary_map.copy()
-        length = find_bfs_path(map_use, targets[start], targets[end])
+        # Find the bfs path and length between two spots
+        length, steps = find_a_star_path(map_use, targets[start], targets[end])
+        # Store the sub paths and lengths
+        paths[(targets[start], targets[end])] = steps
+        paths[(targets[end], targets[start])] = steps[::-1]
         adjacency[start][end], adjacency[end][start] = length, length
-    return adjacency
+
+    return adjacency, paths
 
 def determine_sequence(targets, grid):
-    dists = calc_distances(targets, grid)
+    '''
+    Function to determine the sequence in which to visit the targets
+    '''
+    # Assemble the distance adjacency matrix, and store the paths between individual targets
+    dists, subpaths = calc_distances(targets, grid)
 
+    # Perform held_karp algorithm to minimize total distance
     time, path = held_karp(dists)
-    return path
+
+    # Put together the full path by combining 
+    # the sub paths between the individual targets
+    total_path = []
+    for i in range(len(path) - 1):
+        start = path[i]
+        end = path[i+1]
+        total_path.append(subpaths[(targets[start], targets[end])])
+
+    return time, path, total_path
 
 def read_distances(filename):
+    '''
+    Function to read adjacency graph from a csv
+    '''
     dists = []
     with open(filename, 'rb') as f:
         for line in f:
@@ -205,18 +322,33 @@ def read_distances(filename):
     return dists
 
 
+def unit_test():
+    grid = [[0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 100, 0, 0, 0],
+            [0, 0, 100, 100, 100, 0, 0],
+            [0, 0, 0, 100, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0]]
+    print(grid)
+    print(determine_sequence([(5,5), (6,6), (1,1)], grid))
+
 if __name__ == '__main__':
-    arg = sys.argv[1]
 
-    if arg.endswith('.csv'):
-        dists = read_distances(arg)
-    else:
-        dists = generate_distances(int(arg))
+    unit_test()
 
-    # Pretty-print the distance matrix
-    for row in dists:
-        print(''.join([str(n).rjust(4, ' ') for n in row]))
+    # arg = sys.argv[1]
 
-    print('')
 
-    print(held_karp(dists))
+    # if arg.endswith('.csv'):
+    #     dists = read_distances(arg)
+    # else:
+    #     dists = generate_distances(int(arg))
+
+    # # Pretty-print the distance matrix
+    # for row in dists:
+    #     print(''.join([str(n).rjust(4, ' ') for n in row]))
+
+    # print('')
+
+    # print(held_karp(dists))
