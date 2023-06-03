@@ -3,7 +3,7 @@
 
 # Import Relevant Libraries (Python Modules)
 from numpy import genfromtxt
-from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 
 class frontier:
 
@@ -70,7 +70,7 @@ class frontier:
 
 #####################################################################
 
-
+"""
 def main():
     # Read the data from the CSV file.
     data = genfromtxt('data.csv', delimiter = ',')
@@ -221,5 +221,5 @@ def main():
     plt.show()
 
 if __name__ == "__main__":
-    """Run the main function."""
     main()
+"""

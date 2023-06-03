@@ -2,7 +2,7 @@ import itertools
 import random
 import sys
 import numpy as np
-import queue
+import Queue
 import math
 
 RESOLUTION = 1
@@ -148,7 +148,7 @@ class TSP:
             exit("start in obstacle")
 
         # Establish queue of nodes we will explore
-        frontier = queue.Queue()
+        frontier = Queue.Queue()
         frontier.put(start)
 
         # Keep track of where a cell came from
@@ -208,7 +208,7 @@ class TSP:
             exit("start in obstacle")
 
         # Establish priority queue of nodes we will explore
-        frontier = queue.PriorityQueue()
+        frontier = Queue.PriorityQueue()
         frontier.put((0, start))  # Add start node with priority 0
 
         # Keep track of where a cell came from

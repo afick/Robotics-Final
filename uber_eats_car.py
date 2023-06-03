@@ -21,7 +21,7 @@ from enum import Enum
 
 # CSV Files & Plotting
 from numpy import genfromtxt
-from matplotlib import pyplot as plt
+# from matplotlib import pyplot as plt
 
 # Import Libraries
 from PD_Class import PD
@@ -185,7 +185,7 @@ class UberEatsCar:
 
         # Setting up publishers and subscribers for the robot
         self.map_pub = rospy.Publisher(DEFAULT_MAP_TOPIC, OccupancyGrid, queue_size=1)
-        self._laser_sub = rospy.Subscriber(DEFAULT_SCAN_TOPIC, LaserScan, self._laser_callback, queue_size=1)
+        self._laser_sub = rospy.Subscriber(DEFAULT_SCAN_TOPIC, LaserScan, self.laser_callback, queue_size=1)
         self.odomSub = rospy.Subscriber(DEFAULT_ODOM_TOPIC, Odometry, self._odom_callback, queue_size=1)
         self._cmd_pub = rospy.Publisher(DEFAULT_CMD_VEL_TOPIC, Twist, queue_size=1)
 
@@ -253,6 +253,17 @@ class UberEatsCar:
         self.last_t = rospy.get_rostime()   # Stores previous timestamp  
 
         """ 
+
+    ######################### Storing the Odometry ############################
+    def _odom_callback(self, msg):
+        """Stores the odometry of the robot"""
+
+        self.xpos = msg.pose.pose.position.x
+        self.ypos = msg.pose.pose.position.y
+        quaternion = msg.pose.pose.orientation
+        explicit_quaternion = [quaternion.x, quaternion.y, quaternion.z, quaternion.w]
+        roll, pitch, yaw = tf.transformations.euler_from_quaternion(explicit_quaternion)
+        self.orientation = yaw
 
 
     ######################### Static/Nonstatic Mapping #########################
