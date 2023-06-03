@@ -47,21 +47,24 @@ WIDTH = 400
 THRESHOLD = 0.75 # threshold probability to declare a cell with an obstacle
 THRESHOLD_SAMPLE_SIZE = 200 # threshold sample side where observations are finalized
 
+MIN_OBSTACLE_CHECK_RAD = -45.0 / 180 * math.pi
+MAX_OBSTACLE_CHECK_RAD = 45.0 / 180 * math.pi
+GOAL_DISTANCE = 0.6
+AVOID_LINEAR_VELOCITY = 0.1 #m/s
+AVOID_ANGULAR_VELOCITY = 90 #rad/s
+
 # Topic names
 DEFAULT_CMD_VEL_TOPIC = "robot_0/cmd_vel"
 DEFAULT_ODOM_TOPIC = "robot_0/odom"
 DEFAULT_SCAN_TOPIC = "robot_0/base_scan" # use scan for actual robot
 DEFAULT_MAP_TOPIC = "map"
 
-GLOBAL_POINTS = [(6, 6), (7, 7)]
 CUSTOMERS = [(5, 5), (6, 6), (1, 1)]
 
 FINALLY_DONE = False
 
 ### CARTER ###
 # READ CSV
-# Author: Carter Kruse
-# Date: May 18, 2023
 
 # # Import Relevant Libraries (Python Modules)
 # import csv
@@ -167,18 +170,18 @@ class NonstaticObstacle:
 
 class fsm(Enum):
     
-    SPAWN = 0
+    # SPAWN = 0
     EXPLORE_FRONTIER = 1
     # MOVE = 2
     # RECALCULATE = 3
-    PD = 4
+    AVOID = 4
     # COMPLETE = 5
     TSP = 6
     # add more states here 
 
 class UberEatsCar:
 
-    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, resolution = RESOLUTION, width = WIDTH, height = HEIGHT, origin = ORIGIN, threshold = THRESHOLD, sample_size = THRESHOLD_SAMPLE_SIZE, customers = CUSTOMERS):
+    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, resolution = RESOLUTION, width = WIDTH, height = HEIGHT, origin = ORIGIN, threshold = THRESHOLD, sample_size = THRESHOLD_SAMPLE_SIZE, customers = CUSTOMERS,  obstacle_check_angle = [MIN_OBSTACLE_CHECK_RAD, MAX_OBSTACLE_CHECK_RAD], goal_distance = GOAL_DISTANCE, avoid_linear_velocity=AVOID_LINEAR_VELOCITY, avoid_angular_velocity=AVOID_ANGULAR_VELOCITY):
 
         # Setting up publishers and subscribers for the robot
         self.map_pub = rospy.Publisher(DEFAULT_MAP_TOPIC, OccupancyGrid, queue_size=1)
@@ -200,7 +203,7 @@ class UberEatsCar:
         self.orientation = 0
 
         # Robot state
-        self.fsm = fsm.SPAWN
+        self.fsm = fsm.EXPLORE_FRONTIER
 
         # Store customer locations
         self.customers = customers
@@ -232,12 +235,24 @@ class UberEatsCar:
 
         #################### PD Controller Variables ######################
 
+        self.obstacle_check_angle = obstacle_check_angle
+        self.right_side_obstacle = True    # Determines whether robot should turn left or right to avoid
+        self.error = 0     # Scales the urgency at which the robot should turn
+        self.goal_distance = goal_distance     # checks
+        self.avoid_linear_velocity = avoid_linear_velocity
+        self.avoid_angular_velocity = avoid_angular_velocity
+
+
+        """
+
         self.kp = 0.5  # Proportional gain
         self.kd = 0.1  # Derivative gain
         self.target_distance = 1.0  # Desired distance from obstacles
         self.prev_error = 0.0  # Previous error value for derivative term
         self.obstacle_direction = 0.0  # Direction of the obstacle relative to the robot
-        self.last_t = rospy.get_rostime()   # Stores previous timestamp   
+        self.last_t = rospy.get_rostime()   # Stores previous timestamp  
+
+        """ 
 
 
     ######################### Static/Nonstatic Mapping #########################
@@ -269,7 +284,6 @@ class UberEatsCar:
                     else:
                         self.map.data[i] = 0
 
-        # pad the walls
 
     def bresenham(self, x0, y0, x1, y1):
         """Raytracing algorithm"""
@@ -363,23 +377,33 @@ class UberEatsCar:
     #################### Processing Laser Scan Data #####################
 
     def laser_callback(self, msg):
-        ### CARTER ###
-
         """Processing of laser message."""
-        # Access to the index of measurement is determined by the 'front' of the robot.
-        # LaserScan Message http://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/LaserScan.html
-
-        # Finding the minimum range value between 'min_scan_angle' and 'max_scan_angle', using the min/max indices.
-        min_index = max(int(np.floor((self.min_scan_angle - msg.angle_min) / msg.angle_increment)), 0)
-        max_index = min(int(np.ceil((self.max_scan_angle - msg.angle_min) / msg.angle_increment)), len(msg.ranges) - 1)
+        ### CARTER ###
         
-        # Determining the minimum distance, which is given according to the list of values.
-        min_distance = np.min(msg.ranges[min_index:max_index + 1])
+        min_index = max(int((self.obstacle_check_angle[0] - msg.angle_min) / msg.angle_increment), 0)
+        max_index = min(int((self.obstacle_check_angle[1] - msg.angle_min) / msg.angle_increment), len(msg.ranges) - 1)
+
+        min_distance = msg.range_max
+        i = min_index 
+
+        # Loop through the distance data to see if any valid distances are less than the current minimum distance
+        for index in range(min_index, max_index + 1):
+
+            # If the distance is both valid and less than the current minimum distance, then replace the min with this new value
+            if msg.ranges[index] < min_distance and msg.range_min < msg.ranges[index] < msg.range_max:
+                    
+                min_distance = msg.ranges[index]
+                i = index
+
+        if i > (min_index + max_index) / 2:
+            self.right_side_obstacle = False
+        else:
+            self.right_side_obstacle = True
 
         # Calculate the error, which is the difference between the current distance and the goal distance.
         if min_distance < self.goal_distance:
             self.error = min_distance - self.goal_distance
-            self.fsm = fsm.PD
+            self.fsm = fsm.AVOID
         else:
             self.error = 0
             if FINALLY_DONE:
@@ -394,8 +418,6 @@ class UberEatsCar:
         # self.fsm = fsm.MOVE
         
         ### CARTER ###
-
-        # NOTE: assumption: the one at angle 0 corresponds to the front.
         
         ###### mapping/nonstatic detection ######
 
@@ -495,16 +517,14 @@ class UberEatsCar:
     def spin(self):
         
         rate = rospy.Rate(FREQUENCY) # loop at 10 Hz
+
+        # if the robot just spawned, stay still for 3 seconds and just map surrounding environment
+        rospy.sleep(3)
+
         while not rospy.is_shutdown():
             # Keep looping until user presses Ctrl+C     
 
-            if self.fsm == fsm.SPAWN:
-
-                # if the robot just spawned, stay still for 3 seconds and just map surrounding environment
-                rospy.sleep(3)
-                self.fsm = fsm.EXPLORE_FRONTIER
-
-            elif self.fsm == fsm.EXPLORE_FRONTIER:
+            if self.fsm == fsm.EXPLORE_FRONTIER:
 
                 # restructure the map into a 2D array
                 reshaped_map = np.array(self.map.data).reshape((self.map.info.height, self.map.info.width))
@@ -514,7 +534,7 @@ class UberEatsCar:
                 # NOTE: CHANGE NAME
                 FINALLY_DONE = True
 
-                for point in GLOBAL_POINTS:
+                for point in CUSTOMERS:
                     if reshaped_map[int(point[0] / self.resolution)][int(point[1] / self.resolution)] != 0:
                         FINALLY_DONE = False
                 
@@ -592,10 +612,16 @@ class UberEatsCar:
 
                     # move to the best frontier point
                     for point in shortest_path:
-                        self.move_to(point[0] / self.resolution, point[1] / self.resolution)
+                        self.move_to(point[0] * self.resolution, point[1] * self.resolution)
+                else:
+                    self.fsm = fsm.TSP
             
-            elif self.fsm == fsm.PD:
-                pass
+            elif self.fsm == fsm.AVOID:
+                
+                if self.right_side_obstacle:
+                    self.move(self.avoid_linear_velocity, self.avoid_angular_velocity)
+                else:
+                    self.move(self.avoid_linear_velocity, -self.avoid_angular_velocity)
 
             elif self.fsm == fsm.TSP:
                 
@@ -627,15 +653,55 @@ class UberEatsCar:
                 # solve traveling salesman problem  
                 _, _, path = TSP.determine_sequence(self.customers, new_grid)
                 for point in path:
-                    self.move_to(point[0] / self.resolution, point[1] / self.resolution)
+                    self.move_to(point[0] * self.resolution, point[1] * self.resolution)
 
                     if point in self.customers:
                         self.customers.remove(point)
-                        
+
+                # the robot is done once it reaches the final customer
                 break
 
             rate.sleep()
 
  
+def main():
+    """Main Function."""
+
+    # 1st. initialization of node.
+    rospy.init_node("uber_eats_car")
+
+    # Initialization of the class for the uber eats car
+    uber_eats_car = UberEatsCar()
+    nonstatic_obstacle1 = NonstaticObstacle()
+
+    # Sleep for a few seconds to wait for the registration
+    rospy.sleep(6)
+
+    # If interrupted, send a stop command before interrupting
+    rospy.on_shutdown(uber_eats_car.stop)
+    rospy.on_shutdown(nonstatic_obstacle1.stop)
+
+    try:
+
+        uber_eats_car = threading.Thread(target=uber_eats_car.spin)
+
+        ### Load with more obstacles as desired
+        obstacle1 = threading.Thread(target=nonstatic_obstacle1.obstacle_motion)
+
+        uber_eats_car.start()
+        obstacle1.start()
+
+        uber_eats_car.join()
+        obstacle1.join()
+
+    except rospy.ROSInterruptException:
+        rospy.logerr("ROS node interrupted.")
+
+if __name__ == "__main__":
+    """Run the main function."""
+    main()
+
+        
+
 
 
