@@ -31,8 +31,8 @@ import BFS_Class
 import threading
 
 # import the frontier and TSP modules 
-import frontier
-import TSP
+# import frontier
+# import TSP
 
 # Constants
 FREQUENCY = 10 #Hz
@@ -413,6 +413,7 @@ class UberEatsCar:
 
         # Calculate the error, which is the difference between the current distance and the goal distance.
         if min_distance < self.goal_distance:
+            print("OBSTACLE DETECTED")
             self.error = min_distance - self.goal_distance
             self.fsm = fsm.AVOID
         else:
@@ -523,7 +524,67 @@ class UberEatsCar:
     def stop(self):
         """Stop the robot."""
         twist_msg = Twist()
-        self._cmd_pub.publish(twist_msg)  
+        self._cmd_pub.publish(twist_msg)
+    
+    def frontier_exploration(self, map):
+
+        """
+        Input: 2D array form of the map
+        Output: List of frontier points to be visited
+        """
+
+        # Region-Growing (BFS)
+        regions = []
+        to_visit = set()
+
+        # Add to the 'to_visit' set.
+        for i in range(len(map)):
+            for j in range(len(map[0])):
+                if map[i][j] != 0:
+                    to_visit.add((j, i))
+        
+        # Algorithm
+        while (len(to_visit) != 0):
+            queue = []
+            region = []
+
+            start_point = to_visit.pop()
+            queue.append(start_point)
+
+            neighbors_offsets = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+
+            # Continue to loop through points in the queue (until it is empty).
+            while (len(queue) != 0):
+                current_point = queue.pop(0)
+                region.append(current_point)
+
+                # Neighboring Points
+                for offset in neighbors_offsets:
+                    neighbor_point = (current_point[0] + offset[0], current_point[1] + offset[1])
+
+                    # Check the threshold condition (in the points to visit).
+                    if neighbor_point in to_visit:
+                        # Add the point to the queue and remove it from 'to_visit'.
+                        queue.append(neighbor_point)
+                        to_visit.remove(neighbor_point)
+            
+            # Minimum Region Size
+            if len(region) > 5:
+                regions.append(region)
+        
+        # print(regions)
+        # print(len(regions))
+
+        # # # # #
+
+        points = []
+
+        for region in regions:
+            points.append([sum(ele) / len(region) for ele in zip(*region)])
+        
+        print(points)
+
+        return points
 
     def spin(self):
         
@@ -548,6 +609,8 @@ class UberEatsCar:
                 for point in CUSTOMERS:
                     if reshaped_map[int(point[0] / self.resolution)][int(point[1] / self.resolution)] != 0:
                         FINALLY_DONE = False
+
+                print(FINALLY_DONE)
                 
                 # NOTE: CARTER
                 # # Read the occupancy grid and create a numpy array.
@@ -599,7 +662,9 @@ class UberEatsCar:
                 if not FINALLY_DONE:
                     # find the optimal frontier exploration points
                     
-                    frontier_points = frontier.frontier_exploration(new_grid) # FIXME
+                    frontier_points = self.frontier_exploration(new_grid)
+                    
+                    # frontier.frontier_exploration(new_grid) # FIXME
 
                     # pick the closest point 
                     # Cast to integer values.
@@ -635,42 +700,42 @@ class UberEatsCar:
                     self.move(self.avoid_linear_velocity, -self.avoid_angular_velocity)
 
             elif self.fsm == fsm.TSP:
-                
-                # restructure the map into a 2D array
-                reshaped_map = np.array(self.map.data).reshape((self.map.info.height, self.map.info.width))
+                print("TSM NOW")
+                # # restructure the map into a 2D array
+                # reshaped_map = np.array(self.map.data).reshape((self.map.info.height, self.map.info.width))
 
-                # Pad the grid walls
+                # # Pad the grid walls
 
-                # FIXME
-                distance = 6
+                # # FIXME
+                # distance = 6
 
-                # Create a copy of the original occupancy grid.
-                new_grid = np.copy(reshaped_map)
+                # # Create a copy of the original occupancy grid.
+                # new_grid = np.copy(reshaped_map)
 
-                # Iterate over each cell in the occupancy grid.
-                for i in range(reshaped_map.shape[0]):
-                    for j in range(reshaped_map.shape[1]):
-                        # If the cell is 0 and has a neighboring cell (representing and obstacle)
-                        # within a set distance, set it to 100 (obstacle).
-                        if reshaped_map[i][j] == 0:
-                            for k in range(-distance, distance + 1):
-                                for l in range(-distance, distance + 1):
-                                    # Check the bounds of the occupancy grid.
-                                    if i + k >= 0 and i + k < reshaped_map.shape[0] and j + l >= 0 and j + l < reshaped_map.shape[1]:
-                                        if reshaped_map[i + k][j + l] == 100:
-                                            new_grid[i][j] = 100
-                                            break
+                # # Iterate over each cell in the occupancy grid.
+                # for i in range(reshaped_map.shape[0]):
+                #     for j in range(reshaped_map.shape[1]):
+                #         # If the cell is 0 and has a neighboring cell (representing and obstacle)
+                #         # within a set distance, set it to 100 (obstacle).
+                #         if reshaped_map[i][j] == 0:
+                #             for k in range(-distance, distance + 1):
+                #                 for l in range(-distance, distance + 1):
+                #                     # Check the bounds of the occupancy grid.
+                #                     if i + k >= 0 and i + k < reshaped_map.shape[0] and j + l >= 0 and j + l < reshaped_map.shape[1]:
+                #                         if reshaped_map[i + k][j + l] == 100:
+                #                             new_grid[i][j] = 100
+                #                             break
 
-                # solve traveling salesman problem  
-                _, _, path = TSP.determine_sequence(self.customers, new_grid)
-                for point in path:
-                    self.move_to(point[0] * self.resolution, point[1] * self.resolution)
+                # # solve traveling salesman problem  
+                # _, _, path = TSP.determine_sequence(self.customers, new_grid)
+                # for point in path:
+                #     self.move_to(point[0] * self.resolution, point[1] * self.resolution)
 
-                    if point in self.customers:
-                        self.customers.remove(point)
+                #     if point in self.customers:
+                #         self.customers.remove(point)
 
-                # the robot is done once it reaches the final customer
-                break
+                # # the robot is done once it reaches the final customer
+                # break
 
             rate.sleep()
 
