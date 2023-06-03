@@ -6,13 +6,13 @@ define lidar ranger
     fov 360.0
     samples 721
   )
-  # generic model properties
+  # Generic Model Properties
   color "black"
 )
 
 define rosbot position
 (
-  #localization "gps"
+  # localization "gps"
   localization "odom"
   odom_error [0.0 0.01 0.0 0.01 0.0 0.01]
 
@@ -22,12 +22,8 @@ define rosbot position
   gui_nose 1
   drive "diff"
   color "red"
-  obstacle_return 1    # Can hit things.
+  obstacle_return 1 # Can hit things.
   laser_return 1
   
-  lidar(pose [ 0.0 0.0 -0.1 0.0 ])
-
-
-
-
+  lidar(pose [ 0.0 0.0 0.1 0.0 ])
 )

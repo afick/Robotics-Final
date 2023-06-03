@@ -6,6 +6,7 @@
 import numpy as np
 import math
 import time 
+from enum import Enum
 
 import rospy
 import tf
@@ -37,6 +38,11 @@ DEFAULT_ODOM_TOPIC = "robot_0/odom"
 DEFAULT_SCAN_TOPIC = "robot_0/base_scan" # use scan for actual robot
 DEFAULT_MAP_TOPIC = "map"
 
+class fsm(Enum):
+    MOVE = 0
+    RECALCULATE = 1
+    PD = 2
+
 class NonstaticObstacle:
 
     def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY):
@@ -46,7 +52,6 @@ class NonstaticObstacle:
 
         self.linear_velocity = linear_velocity
         self.angular_velocity = angular_velocity
-
 
     def move(self, linear_vel, angular_vel):
         """Send a velocity command (linear vel in m/s, angular vel in rad/s)."""
@@ -95,6 +100,7 @@ class NonstaticObstacle:
         
         end_time = time.time() + 15
 
+        self.rotate(-1 * math.pi)
         while time.time() < end_time:
             self.translate(1)
             self.rotate(math.pi)
@@ -115,6 +121,8 @@ class NonstaticDetection:
         self._laser_sub = rospy.Subscriber(DEFAULT_SCAN_TOPIC, LaserScan, self._laser_callback, queue_size=1)
         self.odomSub = rospy.Subscriber(DEFAULT_ODOM_TOPIC, Odometry, self._odom_callback, queue_size=1)
         self._cmd_pub = rospy.Publisher(DEFAULT_CMD_VEL_TOPIC, Twist, queue_size=1)
+
+        self.fsm = fsm.MOVE
 
         # Initialize the map parameters
         self.resolution = resolution
@@ -151,6 +159,14 @@ class NonstaticDetection:
         # each cell has a 2 element array (unoccupied, occupied) counter
         self.cell_history = [[0, 0] for _ in range(self.width * self.height)]
 
+        # PD controller variables
+        self.kp = 0.5  # Proportional gain
+        self.kd = 0.1  # Derivative gain
+        self.target_distance = 1.0  # Desired distance from obstacles
+        self.prev_error = 0.0  # Previous error value for derivative term
+        self.obstacle_direction = 0.0  # Direction of the obstacle relative to the robot
+        self.last_t = rospy.get_rostime()   # Stores previous timestamp
+
     def update_history(self, ray, endpoint):
 
         # if point is found in ray, then it has an unoccupied reading
@@ -181,6 +197,8 @@ class NonstaticDetection:
         """Processing of the laser message"""
         # NOTE: assumption: the one at angle 0 corresponds to the front.
         
+        ###### mapping/nonstatic detection ######
+
         for i, distance in enumerate(msg.ranges):
 
             # first check to see if the range reading is valid
@@ -207,7 +225,45 @@ class NonstaticDetection:
         self.update_grid()
 
         self.map_pub.publish(self.map)
+
+        ###### PD controller ######
+
+        # Extract laser scan data and calculate the error and obstacle direction 
+        ranges = msg.ranges
+        closest_distance = min(ranges)
+        error = self.target_distance - closest_distance
+        # Store the current error for the next iteration
+        self.prev_error = error
+        if closest_distance > self.target_distance:
+            self.fsm = fsm.MOVE
+            return
         
+        self.fsm = fsm.PD
+        
+        self.obstacle_direction = ranges.index(min(ranges)) * msg.angle_increment
+
+        # Calculate PD terms
+        proportional = self.kp * error
+
+        time = rospy.get_rostime()
+        # Change in time since last measurement
+        dt = (time - self.last_t).to_sec()
+        derivative = self.kd * (error - self.prev_error) / dt
+        self.last_t = time
+
+        control_signal = proportional + derivative
+
+        # Adjust control signal based on obstacle direction
+        if self.obstacle_direction > 0:  # Obstacle on the right
+            control_signal *= -1
+
+        self.move(self.linear_velocity, control_signal)
+        # Publish the control signal
+        # twist_msg = Twist()
+        # twist_msg.angular.z = control_signal
+        # twist_msg.linear.x = self.linear_velocity
+        # self.cmd_vel_pub.publish(twist_msg)
+
     def _odom_callback(self, msg):
         """Stores the odometry of the robot"""
 
@@ -314,7 +370,7 @@ class NonstaticDetection:
         twist_msg.linear.x = linear_vel
         twist_msg.angular.z = angular_vel
         self._cmd_pub.publish(twist_msg)
-
+    
     def robot_motion(self):
 
         self.rotate(math.pi/2)
@@ -345,11 +401,6 @@ class NonstaticDetection:
         """Stop the robot."""
         twist_msg = Twist()
         self._cmd_pub.publish(twist_msg)   
-
-    def stop_1(self):
-        """Stop the nonstatic obstacle."""
-        twist_msg = Twist()
-        self._robot1.publish(twist_msg)
 
     def translate(self, distance):
         """Helper method that moves the robot over a specified distance"""
