@@ -104,8 +104,9 @@ class PD_Controller():
 
         # Calculate the error, which is the difference between the current distance and the goal distance.
         if min_distance < self.goal_distance:
-            self.error = (self.goal_distance - min_distance) * 10
+            self.error = min_distance - self.goal_distance
         else:
+            self.fsm = FSM.RECALCULATE
             self.error = 0
 
             # return to path function
