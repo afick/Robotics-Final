@@ -159,7 +159,7 @@ class NonstaticDetection:
         # each cell has a 2 element array (unoccupied, occupied) counter
         self.cell_history = [[0, 0] for _ in range(self.width * self.height)]
 
-        # PD controller variables
+        # PD controll er variables
         self.kp = 0.5  # Proportional gain
         self.kd = 0.1  # Derivative gain
         self.target_distance = 1.0  # Desired distance from obstacles
