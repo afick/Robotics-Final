@@ -62,7 +62,7 @@ GOAL_DISTANCE = 0.4
 AVOID_LINEAR_VELOCITY = 0.1 #m/s
 AVOID_ANGULAR_VELOCITY = 90 #rad/s
 
-MIN_THRESHOLD_DISTANCE = 0
+MIN_THRESHOLD_DISTANCE = 0.5
 
 # Topic names
 DEFAULT_CMD_VEL_TOPIC = "robot_0/cmd_vel"
@@ -75,9 +75,6 @@ CUSTOMERS = [(int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION))]
 MIN_CHECKPOINT = 3
 
 FINALLY_DONE = False
-
-
-
 
 def create_poses(path, res):
     '''
@@ -409,7 +406,6 @@ def find_a_star_path(grid, start, end):
     solution.append(start)
     solution.reverse()
     dist = len(solution)
-
 
     return dist, solution
 
@@ -932,9 +928,9 @@ class UberEatsCar:
 
                             # Check to make sure the grid point was not already marked as an obstacle.
                             # FIXME
-                            if self.map.data[index] != 100:
-                                self.not_occupied[index] += 1
+                            # if self.map.data[index] != 100:
                                 # self.map.data[index] = 0
+                            self.not_occupied[index] += 1
 
                     # Calculate the position of the obstacle, according to the 'odom' reference frame.
                     angle = msg.angle_min + i * msg.angle_increment
@@ -956,8 +952,9 @@ class UberEatsCar:
                 #     poses, steps = create_poses(self.shortest_path, RESOLUTION)
                 #     self.publish_pose_array(poses)
 
+                # FIXME: change 400 to self.width and self.height
                 for index in range(400 * 400):
-                    if self.occupied[index] > self.not_occupied[index]:
+                    if self.occupied[index] * 2.4 > self.not_occupied[index]:
                         self.map.data[index] = 100
                     elif self.occupied[index] == 0 and self.not_occupied[index] == 0:
                         self.map.data[index] = -1
@@ -992,6 +989,33 @@ class UberEatsCar:
             rate.sleep()
 
         self.stop()
+
+    def expand_boundaries(self, grid):
+        rows = len(grid)
+        cols = len(grid[0])
+        # Initialize a map of the same size that can be fully explored 
+        newmap = grid.copy()
+        # Calculate the expansion factor
+        expand = int(1)  ## FIXME
+
+        # Iterate through each cell
+        for r in range(rows):
+            for c in range(cols):
+                # If there is an obstacle in the map
+                if grid[r][c] == 100: 
+                    # Mark this cell as not explorable, and expand this by the appropriate factor
+                    newmap[r][c] = 100
+                    for v in range(1, expand+1):
+                        if r-v >= 0:
+                            newmap[r-v][c] = 100
+                        if r+v < rows:
+                            newmap[r+v][c] = 100
+                        if c-v >= 0:
+                            newmap[r][c-v] = 100
+                        if c+v < cols:
+                            newmap[r][c+v] = 100
+                        
+        return np.array(newmap)
 
     # def rotate(self, theta):
     #     """Helper method that rotates the robot theta radians"""
@@ -1206,7 +1230,7 @@ class UberEatsCar:
                         to_visit.remove(neighbor_point)
             
             # Minimum Region Size
-            if len(region) > 5:
+            if len(region) > 10:
                 regions.append(region)
         
         # print(regions)
@@ -1322,7 +1346,8 @@ class UberEatsCar:
                             # for j in range(len(points)):
                             #     if i != j:
                                 # FIXME - ADD PADDING
-                                new_path = bfs(new_grid, (int((self.xpos) * 20), int((self.ypos) * 20)), (int(points[i][0]), int(points[i][1])))
+                                use = self.expand_boundaries(new_grid)
+                                new_path = bfs(use, (int((self.xpos) * 20), int((self.ypos) * 20)), (int(points[i][0]), int(points[i][1])))
                                 
                                 # print(new_path)
                                 # new_path = BFS_Class.BFS(new_grid, (points[i][0], points[i][1]), (points[j][0], points[j][1]))
@@ -1371,7 +1396,7 @@ class UberEatsCar:
                 print("TSP NOW")
 
                 # RIGHT HERE
-                # np.savetxt('output.csv', self.map.data, delimiter=",")
+                np.savetxt('output.csv', self.map.data, delimiter=",")
                 
                 # read in the csv file with the occupancy grid data
 
@@ -1448,36 +1473,6 @@ class UberEatsCar:
                 break
 
             rate.sleep()
-
-    def expand_boundaries(self, robot_size, grid):
-            '''
-            Function that creates binary matrix of explorable cells, and expands size of obstacles
-            '''
-            rows = len(grid)
-            cols = len(grid[0])
-            # Initialize a map of the same size that can be fully explored 
-            binary_map = [[False for i in range(cols)] for j in range(rows)]
-            # Calculate the expansion factor
-            expand = SLACK
-
-            # Iterate through each cell
-            for r in range(rows):
-                for c in range(cols):
-                    # If there is an obstacle in the map
-                    if grid[r][c] != 0: 
-                        # Mark this cell as not explorable, and expand this by the appropriate factor
-                        binary_map[r][c] = True
-                        for v in range(1, expand+1):
-                            if r-v >= 0:
-                                binary_map[r-v][c] = True
-                            if r+v < rows:
-                                binary_map[r+v][c] = True
-                            if c-v >= 0:
-                                binary_map[r][c-v] = True
-                            if c+v < cols:
-                                binary_map[r][c+v] = True
-                            
-            return np.array(binary_map)
 
     def validate(self, cell, visited):
         '''
@@ -1717,7 +1712,11 @@ def main():
 
     # Initialization of the class for the uber eats car
     uber_eats_car = UberEatsCar()
+
+    # Initialization of the nonstatic obstacles
     nonstatic_obstacle1 = NonstaticObstacle(1)
+    nonstatic_obstacle2 = NonstaticObstacle(2)
+    nonstatic_obstacle3 = NonstaticObstacle(3)
 
     # Sleep for a few seconds to wait for the registration
     rospy.sleep(3)
@@ -1725,18 +1724,26 @@ def main():
     # If interrupted, send a stop command before interrupting
     rospy.on_shutdown(uber_eats_car.stop)
     rospy.on_shutdown(nonstatic_obstacle1.stop)
+    rospy.on_shutdown(nonstatic_obstacle2.stop)
+    rospy.on_shutdown(nonstatic_obstacle3.stop)
 
     try:
         uber_eats_car = threading.Thread(target=uber_eats_car.spin)
 
         ### Load with more obstacles as desired
         obstacle1 = threading.Thread(target=nonstatic_obstacle1.spin)
+        obstacle2 = threading.Thread(target=nonstatic_obstacle2.spin)
+        obstacle3 = threading.Thread(target=nonstatic_obstacle3.spin)
 
         uber_eats_car.start()
         obstacle1.start()
+        obstacle2.start()
+        obstacle3.start()
 
         uber_eats_car.join()
         obstacle1.join()
+        obstacle2.join()
+        obstacle3.join()
 
     except rospy.ROSInterruptException:
         rospy.logerr("ROS node interrupted.")
