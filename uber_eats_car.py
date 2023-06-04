@@ -71,7 +71,7 @@ DEFAULT_SCAN_TOPIC = "robot_0/base_scan" # use scan for actual robot
 DEFAULT_MAP_TOPIC = "map"
 
 # (int((2 + 3) / RESOLUTION), int((4 + 3) / RESOLUTION)), (int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), 
-CUSTOMERS = [(int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION))]
+CUSTOMERS = [(int((6 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), (int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), (int((2 + 3) / RESOLUTION), int((4 + 3) / RESOLUTION))]
 MIN_CHECKPOINT = 3
 
 FINALLY_DONE = False
@@ -177,6 +177,10 @@ def euclidean_distance(point1, point2):
 
 def astar(map, start_point, end_point):
     """A* Algorithm with Euclidean distance heuristic"""
+    print(start_point)
+    print(map[start_point[1]][int(start_point[0])])
+    print(end_point)
+    print(map[end_point[1]][int(end_point[0])])
 
     visited = {start_point: None}  # Change the starting point in visited to None
     queue = [(start_point, 0)]  # Queue now holds (point, g_score) tuples
@@ -192,7 +196,9 @@ def astar(map, start_point, end_point):
                 shortest_path.append(current)
                 current = visited[current]
             shortest_path.reverse()  # Reverse the path to get it from start to end
-            return shortest_path, current_g_score
+
+            print(shortest_path)
+            return shortest_path, len(shortest_path)
 
         adjacent_points = []
         current_col, current_row = current
@@ -238,6 +244,7 @@ def astar(map, start_point, end_point):
                 queue.append((point, f_score))
 
     # If there's no path found
+    print("no path")
     return None, None
 
 def bfs(map, start_point, end_point):
@@ -264,6 +271,8 @@ def bfs(map, start_point, end_point):
                 while current:
                     shortest_path.append(current)
                     current = visited[current]
+                
+                print(shortest_path)
                 
                 return shortest_path
             
@@ -318,14 +327,14 @@ def bfs(map, start_point, end_point):
                     visited[point] = current
                     queue.append(point)
 
-def expand_boundaries(robot_size, grid):
+def expand_boundaries(grid):
     '''
     Function that creates binary matrix of explorable cells, and expands size of obstacles
     '''
     rows = len(grid)
     cols = len(grid[0])
     # Initialize a map of the same size that can be fully explored 
-    binary_map = [[False for i in range(cols)] for j in range(rows)]
+    newmap = grid.copy()
     # Calculate the expansion factor
     expand = int(2)  ## FIXME
 
@@ -335,18 +344,18 @@ def expand_boundaries(robot_size, grid):
             # If there is an obstacle in the map
             if grid[r][c] == 100: 
                 # Mark this cell as not explorable, and expand this by the appropriate factor
-                binary_map[r][c] = True
+                newmap[r][c] = 100
                 for v in range(1, expand+1):
                     if r-v >= 0:
-                        binary_map[r-v][c] = True
+                        newmap[r-v][c] = 100
                     if r+v < rows:
-                        binary_map[r+v][c] = True
+                        newmap[r+v][c] = 100
                     if c-v >= 0:
-                        binary_map[r][c-v] = True
+                        newmap[r][c-v] = 100
                     if c+v < cols:
-                        binary_map[r][c+v] = True
+                        newmap[r][c+v] = 100
                     
-    return np.array(binary_map)
+    return np.array(newmap)
 
 def validate(cell, visited):
     '''
@@ -587,7 +596,7 @@ class UberEatsCar:
         self.orientation = 0
 
         # Robot state
-        self.fsm = fsm.EXPLORE_FRONTIER
+        self.fsm = fsm.TSP
 
         self.occupied = [0 for _ in range(400 * 400)]
         self.not_occupied = [0 for _ in range(400 * 400)]
@@ -1464,10 +1473,10 @@ class UberEatsCar:
                 # solve traveling salesman problem  
                 _, target_order, path = self.determine_sequence(self.customers, reshaped_data)
                 # print(target_order)
-                
+                flatPath = [element for innerList in path for element in innerList]
+                poses, steps = create_poses(flatPath, RESOLUTION)
+                self.publish_pose_array(poses)
                 for subpath in path:
-                    poses, steps = create_poses(subpath, RESOLUTION)
-                    self.publish_pose_array(poses)
                     for point in subpath:
                         print(point)
                         self.move_to(int(point[0]) * self.resolution, int(point[1]) * self.resolution)
@@ -1480,36 +1489,33 @@ class UberEatsCar:
 
             rate.sleep()
 
-    def expand_boundaries(self, robot_size, grid):
-            '''
-            Function that creates binary matrix of explorable cells, and expands size of obstacles
-            '''
-            rows = len(grid)
-            cols = len(grid[0])
-            # Initialize a map of the same size that can be fully explored 
-            binary_map = [[False for i in range(cols)] for j in range(rows)]
-            # Calculate the expansion factor
-            expand = SLACK
+    def expand_boundaries(self, grid):
+        rows = len(grid)
+        cols = len(grid[0])
+        # Initialize a map of the same size that can be fully explored 
+        newmap = grid.copy()
+        # Calculate the expansion factor
+        expand = int(5)  ## FIXME
 
-            # Iterate through each cell
-            for r in range(rows):
-                for c in range(cols):
-                    # If there is an obstacle in the map
-                    if grid[r][c] != 0: 
-                        # Mark this cell as not explorable, and expand this by the appropriate factor
-                        binary_map[r][c] = True
-                        for v in range(1, expand+1):
-                            if r-v >= 0:
-                                binary_map[r-v][c] = True
-                            if r+v < rows:
-                                binary_map[r+v][c] = True
-                            if c-v >= 0:
-                                binary_map[r][c-v] = True
-                            if c+v < cols:
-                                binary_map[r][c+v] = True
-                            
-            return np.array(binary_map)
-
+        # Iterate through each cell
+        for r in range(rows):
+            for c in range(cols):
+                # If there is an obstacle in the map
+                if grid[r][c] == 100: 
+                    # Mark this cell as not explorable, and expand this by the appropriate factor
+                    newmap[r][c] = 100
+                    for v in range(1, expand+1):
+                        if r-v >= 0:
+                            newmap[r-v][c] = 100
+                        if r+v < rows:
+                            newmap[r+v][c] = 100
+                        if c-v >= 0:
+                            newmap[r][c-v] = 100
+                        if c+v < cols:
+                            newmap[r][c+v] = 100
+                        
+        return np.array(newmap)
+    
     def validate(self, cell, visited):
         '''
         Function to validate if a cell can be visited
@@ -1616,7 +1622,7 @@ class UberEatsCar:
         adjacency = np.zeros((len(targets), len(targets)))
         indices = [i for i in range(len(targets))]
         # Create map of reachable and unreachable positions
-        binary_map = self.expand_boundaries(ROBOT, grid)
+        binary_map = self.expand_boundaries(grid)
         # Store the paths between two positions
         paths = {}
         print(binary_map)
@@ -1643,13 +1649,15 @@ class UberEatsCar:
         # Go through all possible combinations of 2 targets
         for start, end in list(itertools.combinations(indices, 2)):
             map_use = binary_map.copy()
-            length, steps = astar(new_grid_bomb, targets[start], targets[end])
+            steps, length = astar(binary_map, targets[start], targets[end])
 
             # # Find the bfs path and length between two spots
             # steps = bfs(new_grid_bomb, targets[start], targets[end])
             # length = len(steps)
             # Store the sub paths and lengths
+            print(steps)
             paths[(targets[start], targets[end])] = steps
+
             paths[(targets[end], targets[start])] = steps[::-1]
             adjacency[start][end], adjacency[end][start] = length, length
 
