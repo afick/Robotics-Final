@@ -46,7 +46,7 @@ rosbot
 # throw in a second robot
 rosbot
 (
-  pose [ -1.0 -1.0 0.0 0.0 ]
+  pose [ 1.2 1.2 0.0 0.0 ]
   name "rosbot2"
   color "blue"
 )
