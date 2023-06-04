@@ -6,6 +6,7 @@
 # Import Relevant Libraries
 import rospy # Module - ROS APIs
 import tf
+import itertools
 
 # ROS APIs
 from geometry_msgs.msg import PoseArray, Pose, Twist
@@ -22,7 +23,6 @@ import numpy as np
 from enum import Enum
 import Queue
 import random
-
 
 import csv
 
@@ -47,9 +47,11 @@ LINEAR_VELOCITY = 0.1 #m/s
 ANGULAR_VELOCITY = math.pi/8 #rad/s
 ORIGIN = (-5, -5) #(m, m)
 
+ROBOT = 0.2 * (2 ** (1/2))
 RESOLUTION = 0.05
 HEIGHT = 400
 WIDTH = 400
+SLACK = 4
 
 THRESHOLD = 0.3 # threshold probability to declare a cell with an obstacle
 THRESHOLD_SAMPLE_SIZE = 600 # threshold sample size where observations are finalized
@@ -68,11 +70,11 @@ DEFAULT_ODOM_TOPIC = "robot_0/odom"
 DEFAULT_SCAN_TOPIC = "robot_0/base_scan" # use scan for actual robot
 DEFAULT_MAP_TOPIC = "map"
 
-CUSTOMERS = [(5, 8), (1, 1)]
+# (int((2 + 3) / RESOLUTION), int((4 + 3) / RESOLUTION)), (int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), 
+CUSTOMERS = [(int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION))]
 MIN_CHECKPOINT = 3
 
 FINALLY_DONE = False
-
 
 
 ### CARTER ###
@@ -122,9 +124,7 @@ def create_poses(path, res):
     for i, node in enumerate(path):
         # Transform points for map frame (from grid)
         x = node[0] * res
-        y = node[1] * res
-
-        
+        y = node[1] * res     
 
         # Calculate angle (yaw)
         if i < len(path) - 1:
@@ -134,8 +134,8 @@ def create_poses(path, res):
 
         # Create pose object and assign properties
         pose = Pose()
-        pose.position.x = x - 3
-        pose.position.y = y - 3
+        pose.position.x = x - 2.8
+        pose.position.y = y - 2.8
         quaternion = tf.transformations.quaternion_from_euler(0, 0, angle)
         pose.orientation.x = quaternion[0]
         pose.orientation.y = quaternion[1]
@@ -168,6 +168,77 @@ def publish_pose_array(self, poses):
     pose_msg.poses = poses
     
     self.pose_pub.publish(pose_msg)
+
+def euclidean_distance(point1, point2):
+    """Euclidean distance heuristic function"""
+    x1, y1 = point1
+    x2, y2 = point2
+    return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+
+def astar(map, start_point, end_point):
+    """A* Algorithm with Euclidean distance heuristic"""
+
+    visited = {start_point: None}  # Change the starting point in visited to None
+    queue = [(start_point, 0)]  # Queue now holds (point, g_score) tuples
+
+    while queue:
+        current, current_g_score = min(queue, key=lambda x: x[1])  # Select the point with the lowest g_score
+        queue.remove((current, current_g_score))
+
+        if current == end_point:
+            # Reconstruct the path
+            shortest_path = []
+            while current:
+                shortest_path.append(current)
+                current = visited[current]
+            shortest_path.reverse()  # Reverse the path to get it from start to end
+            return shortest_path, current_g_score
+
+        adjacent_points = []
+        current_col, current_row = current
+
+        # Up
+        if current_row > 0 and map[int(current_row - 1)][int(current_col)] != 100:
+            adjacent_points.append((current_col, current_row - 1))
+
+        # Right
+        if current_col < (len(map[0]) - 1) and map[int(current_row)][int(current_col + 1)] != 100:
+            adjacent_points.append((current_col + 1, current_row))
+
+        # Down
+        if current_row < (len(map) - 1) and map[int(current_row + 1)][int(current_col)] != 100:
+            adjacent_points.append((current_col, current_row + 1))
+
+        # Left
+        if current_col > 0 and map[int(current_row)][int(current_col - 1)] != 100:
+            adjacent_points.append((current_col - 1, current_row))
+
+        # Up & Right
+        if current_row > 0 and current_col < (len(map[0]) - 1) and map[int(current_row - 1)][int(current_col + 1)] != 100:
+            adjacent_points.append((current_col + 1, current_row - 1))
+
+        # Up & Left
+        if current_row > 0 and current_col > 0 and map[int(current_row - 1)][int(current_col - 1)] != 100:
+            adjacent_points.append((current_col - 1, current_row - 1))
+
+        # Down & Right
+        if current_row < (len(map) - 1) and current_col < (len(map[0]) - 1) and map[int(current_row + 1)][int(current_col + 1)] != 100:
+            adjacent_points.append((current_col + 1, current_row + 1))
+
+        # Down & Left
+        if current_row < (len(map) - 1) and current_col > 0 and map[int(current_row + 1)][int(current_col - 1)] != 100:
+            adjacent_points.append((current_col - 1, current_row + 1))
+
+        for point in adjacent_points:
+            if point not in visited:
+                g_score = current_g_score + 1  # Distance between adjacent points is always 1 in this grid
+                h_score = euclidean_distance(point, end_point)  # Calculate the heuristic score
+                f_score = g_score + h_score  # Calculate the total score
+                visited[point] = current
+                queue.append((point, f_score))
+
+    # If there's no path found
+    return None, None
 
 def bfs(map, start_point, end_point):
         """BFS Function"""
@@ -375,17 +446,17 @@ def find_a_star_path(grid, start, end):
 
 class NonstaticObstacle:
 
-    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, min_threshold_distance = MIN_THRESHOLD_DISTANCE,
+    def __init__(self, robot_num, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, min_threshold_distance = MIN_THRESHOLD_DISTANCE,
             scan_angle=[MIN_OBSTACLE_CHECK_RAD, MAX_OBSTACLE_CHECK_RAD]):
 
         # Setting up velocity command publishers for an obstacle
-        self._cmd_pub = rospy.Publisher("robot_1/cmd_vel", Twist, queue_size=1)
-        self._laser_sub = rospy.Subscriber("robot_1/base_scan", LaserScan, self._laser_callback, queue_size=1)
+        self._cmd_pub = rospy.Publisher("robot_" + str(robot_num) + "/cmd_vel", Twist, queue_size=1)
+        self._laser_sub = rospy.Subscriber("robot_" + str(robot_num) + "/base_scan", LaserScan, self._laser_callback, queue_size=1)
 
         self.linear_velocity = linear_velocity
         self.angular_velocity = angular_velocity
 
-    # Parameters.
+        # Parameters.
         self.linear_velocity = linear_velocity # Constant linear velocity set.
         self.angular_velocity = angular_velocity # Constant angular velocity set.
         self.min_threshold_distance = min_threshold_distance
@@ -500,8 +571,6 @@ class UberEatsCar:
         self._laser_sub = rospy.Subscriber(DEFAULT_SCAN_TOPIC, LaserScan, self.laser_callback, queue_size=1)
         self.odomSub = rospy.Subscriber(DEFAULT_ODOM_TOPIC, Odometry, self._odom_callback, queue_size=1)
         self._cmd_pub = rospy.Publisher(DEFAULT_CMD_VEL_TOPIC, Twist, queue_size=1)
-        # self.pose_pub = rospy.Publisher("robot_0/pose_sequence", PoseArray, queue_size=1)
-
         self.pose_pub = rospy.Publisher("robot_0/pose_sequence", PoseArray, queue_size = 1)
 
         ######################### Parameters #######################
@@ -520,11 +589,14 @@ class UberEatsCar:
         # Robot state
         self.fsm = fsm.EXPLORE_FRONTIER
 
+        self.occupied = [0 for _ in range(400 * 400)]
+        self.not_occupied = [0 for _ in range(400 * 400)]
+
         # Store customer locations
         self.customers = customers
 
         self.angle_tolerance = 0.04
-        self.distance_tolerance = 0.20
+        self.distance_tolerance = 0.12
 
         #################### Occupancy Grid Mapping #########################
 
@@ -558,6 +630,8 @@ class UberEatsCar:
         self.cell_history = [[0, 0] for _ in range(self.width * self.height)]
 
         self.shortest_path = None
+        self.rotating_now = False
+        self.still_exploring = True
 
         #################### PD Controller Variables ######################
 
@@ -804,12 +878,14 @@ class UberEatsCar:
             print("OBSTACLE DETECTED")
             self.error = min_distance - self.goal_distance
             self.fsm = fsm.AVOID
-        else:
-            self.error = 0
-            if FINALLY_DONE:
-                self.fsm = fsm.TSP
-            else:
-                self.fsm = fsm.EXPLORE_FRONTIER
+        # FIXME
+        # else:
+        #     self.error = 0
+        #     if FINALLY_DONE:
+        #         self.fsm = fsm.TSP
+        #     else:
+        #         self.fsm = fsm.TSP
+                # self.fsm = fsm.EXPLORE_FRONTIER
 
             # return to path function
 
@@ -850,63 +926,77 @@ class UberEatsCar:
         ### KEVIN ###
 
         ### CARTER ###
-        """Processing of laser message."""
-        # Access to the index of the measurement in front of the robot.
-        # LaserScan Message http://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/LaserScan.html
-
-        # Convert the laser scan message to a list of ranges.
-        ranges = list(msg.ranges)
-
-        # Update the occupancy grid map, by looping through the measurements.
-        for i, distance in enumerate(ranges):
-            # Check to see if the range is out of bounds.
-            if distance >= msg.range_max:
-                continue
-
-            # Create a range of values up to the measurement (for free space locations).
-            space_list = np.arange(0.0, distance, self.resolution)
+        if self.still_exploring and not self.rotating_now:
+            """Processing of laser message."""
+            # Access to the index of the measurement in front of the robot.
+            # LaserScan Message http://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/LaserScan.html
             
-            for space_range in space_list:
-                # Calculate the position of the free space, according to the 'odom' reference frame.
-                angle = msg.angle_min + i * msg.angle_increment
-                x = self.xpos + space_range * math.cos(self.orientation + angle)
-                y = self.ypos + space_range * math.sin(self.orientation + angle)
+            if self.fsm != fsm.TSP:
+                # Convert the laser scan message to a list of ranges.
+                ranges = list(msg.ranges)
 
-                # Convert the physical position to grid coordinates.
-                x_grid = int(round((x) / self.resolution))
-                y_grid = int(round((y) / self.resolution))
+                # if self.map.data[index] != 100:
 
-                # Update the the occupancy grid accordingly.
-                if x_grid >= 0 and x_grid < self.width and y_grid >= 0 and y_grid < self.height:
-                    # Determine the appropriate index for the array.
-                    index = y_grid * self.width + x_grid
+                # Update the occupancy grid map, by looping through the measurements.
+                for i, distance in enumerate(ranges):
+                    # Check to see if the range is out of bounds.
+                    if distance >= msg.range_max:
+                        continue
 
-                    # Check to make sure the grid point was not already marked as an obstacle.
-                    # FIXME
-                    if self.map.data[index] != 100:
+                    # Create a range of values up to the measurement (for free space locations).
+                    space_list = np.arange(0.0, distance, self.resolution)
+                    
+                    for space_range in space_list:
+                        # Calculate the position of the free space, according to the 'odom' reference frame.
+                        angle = msg.angle_min + i * msg.angle_increment
+                        x = self.xpos + space_range * math.cos(self.orientation + angle)
+                        y = self.ypos + space_range * math.sin(self.orientation + angle)
+
+                        # Convert the physical position to grid coordinates.
+                        x_grid = int(round((x) / self.resolution))
+                        y_grid = int(round((y) / self.resolution))
+
+                        # Update the the occupancy grid accordingly.
+                        if x_grid >= 0 and x_grid < self.width and y_grid >= 0 and y_grid < self.height:
+                            # Determine the appropriate index for the array.
+                            index = y_grid * self.width + x_grid
+
+                            # Check to make sure the grid point was not already marked as an obstacle.
+                            # FIXME
+                            if self.map.data[index] != 100:
+                                self.not_occupied[index] += 1
+                                # self.map.data[index] = 0
+
+                    # Calculate the position of the obstacle, according to the 'odom' reference frame.
+                    angle = msg.angle_min + i * msg.angle_increment
+                    x = self.xpos + distance * math.cos(self.orientation + angle)
+                    y = self.ypos + distance * math.sin(self.orientation + angle)
+
+                    # Convert the physical position to grid coordinates.
+                    x_grid = int(round((x) / self.resolution))
+                    y_grid = int(round((y) / self.resolution))
+
+                    # Update the occupancy grid, accordingly.
+                    if x_grid >= 0 and x_grid < self.width and y_grid >= 0 and y_grid < self.height:
+                        # Determine the appropriate index for the array.
+                        index = y_grid * self.width + x_grid
+                        self.occupied[index] += 1
+                        # self.map.data[index] = 100
+                
+                # if self.shortest_path is not None:
+                #     poses, steps = create_poses(self.shortest_path, RESOLUTION)
+                #     self.publish_pose_array(poses)
+
+                for index in range(400 * 400):
+                    if self.occupied[index] > self.not_occupied[index]:
+                        self.map.data[index] = 100
+                    elif self.occupied[index] == 0 and self.not_occupied[index] == 0:
+                        self.map.data[index] = -1
+                    else:
                         self.map.data[index] = 0
 
-            # Calculate the position of the obstacle, according to the 'odom' reference frame.
-            angle = msg.angle_min + i * msg.angle_increment
-            x = self.xpos + distance * math.cos(self.orientation + angle)
-            y = self.ypos + distance * math.sin(self.orientation + angle)
-
-            # Convert the physical position to grid coordinates.
-            x_grid = int(round((x) / self.resolution))
-            y_grid = int(round((y) / self.resolution))
-
-            # Update the occupancy grid, accordingly.
-            if x_grid >= 0 and x_grid < self.width and y_grid >= 0 and y_grid < self.height:
-                # Determine the appropriate index for the array.
-                index = y_grid * self.width + x_grid
-                self.map.data[index] = 100
-        
-        # if self.shortest_path is not None:
-        #     poses, steps = create_poses(self.shortest_path, RESOLUTION)
-        #     self.publish_pose_array(poses)
-
-        # Publish the map information/data to the appropriate topic.
-        self.map_pub.publish(self.map)
+                # Publish the map information/data to the appropriate topic.
+                self.map_pub.publish(self.map)
 
     ######################### Movement Commands ############################
 
@@ -934,28 +1024,30 @@ class UberEatsCar:
 
         self.stop()
 
-    def rotate(self, theta):
-        """Helper method that rotates the robot theta radians"""
+    # def rotate(self, theta):
+    #     """Helper method that rotates the robot theta radians"""
     
-        rate = rospy.Rate(FREQUENCY)
+    #     rate = rospy.Rate(FREQUENCY)
 
-        time = abs(theta/self.angular_velocity)
+    #     time = abs(theta/self.angular_velocity)
 
-        # Rotate for the desired amount of time
-        start_time = rospy.get_rostime()
-        while rospy.get_rostime() - start_time <= rospy.Duration(time):
-            if theta >= 0:
-                self.move(0, self.angular_velocity)
-            else:
-                self.move(0, -self.angular_velocity)
+    #     # Rotate for the desired amount of time
+    #     start_time = rospy.get_rostime()
+    #     while rospy.get_rostime() - start_time <= rospy.Duration(time):
+    #         if theta >= 0:
+    #             self.move(0, self.angular_velocity)
+    #         else:
+    #             self.move(0, -self.angular_velocity)
 
-            rate.sleep()
+    #         rate.sleep()
 
-        self.stop() 
+    #     self.stop() 
     
     def move_to(self, x, y):
         """Move the robot to a given position."""
         # Rotation
+        self.rotating_now = True
+
         # Calculate using arctan and the current orientation of the robot (modulo 2 pi).
         angle = (math.atan2(y - self.ypos, x - self.xpos) - self.orientation) % (2 * math.pi)
 
@@ -971,7 +1063,9 @@ class UberEatsCar:
             
             # Recalculate the angle, based on the new orientation.
             angle = (math.atan2(y - self.ypos, x - self.xpos) - self.orientation) % (2 * math.pi)
-        
+
+        self.rotating_now = False
+
         self.stop()
 
         # Translation
@@ -994,7 +1088,6 @@ class UberEatsCar:
             distance = math.sqrt(x_distance ** 2 + y_distance ** 2)
         
         self.stop()
-        # self.fsm = FSM.STOP
         
     # def move_to(self, x, y):
     #     """Helper method that translates the robot from its current position
@@ -1022,6 +1115,8 @@ class UberEatsCar:
     def stop(self):
         """Stop the robot."""
         twist_msg = Twist()
+        twist_msg.linear.x = 0.0
+        twist_msg.angular.z = 0.0
         self._cmd_pub.publish(twist_msg)
     
     def frontier_exploration(self, map):
@@ -1180,7 +1275,7 @@ class UberEatsCar:
             elif self.fsm == fsm.MOVE:
                 # move to the best frontier point
                 for point in self.shortest_path:
-                    print(point)
+                    # print(point)
                     self.move_to(point[0] * self.resolution, point[1] * self.resolution)
                 
                 self.fsm = fsm.EXPLORE_FRONTIER
@@ -1192,11 +1287,11 @@ class UberEatsCar:
                 # completeness check 
                 ### NOTE: insert completeness check here ###
                 # NOTE: CHANGE NAME
-                FINALLY_DONE = True
+                # FINALLY_DONE = True
 
-                for point in CUSTOMERS:
-                    if reshaped_map[int(point[0] / self.resolution)][int(point[1] / self.resolution)] != 0:
-                        FINALLY_DONE = False
+                # for point in CUSTOMERS:
+                #     if reshaped_map[int(point[0] / self.resolution)][int(point[1] / self.resolution)] != 0:
+                #         FINALLY_DONE = False
                 
                 print("EF - MAP DONE")
                 
@@ -1207,7 +1302,7 @@ class UberEatsCar:
                 # Pad the grid walls
                 
                 # FIXME
-                distance = 6
+                distance = 5
 
                 # Create a copy of the original occupancy grid.
                 new_grid = np.copy(reshaped_map)
@@ -1260,7 +1355,7 @@ class UberEatsCar:
                                 # FIXME - ADD PADDING
                                 new_path = bfs(new_grid, (int((self.xpos) * 20), int((self.ypos) * 20)), (int(points[i][0]), int(points[i][1])))
                                 
-                                print(new_path)
+                                # print(new_path)
                                 # new_path = BFS_Class.BFS(new_grid, (points[i][0], points[i][1]), (points[j][0], points[j][1]))
 
                                 # final_path = []
@@ -1288,12 +1383,12 @@ class UberEatsCar:
                         self.publish_pose_array(poses)
                         self.publish_msg = True
                         
-                        print("SHORTEST PATH")
-                        print(self.shortest_path)
+                        # print("SHORTEST PATH")
+                        # print(self.shortest_path)
 
                         self.fsm = fsm.MOVE
-                else:
-                    self.fsm = fsm.TSP
+                    else:
+                        self.fsm = fsm.TSP
 
             elif self.fsm == fsm.AVOID:
                 # self.fsm = fsm.MOVE
@@ -1303,7 +1398,14 @@ class UberEatsCar:
                     self.move(self.avoid_linear_velocity, -self.avoid_angular_velocity)
 
             elif self.fsm == fsm.TSP:
-                print("TSM NOW")
+                self.still_exploring = False
+                print("TSP NOW")
+
+                # RIGHT HERE
+                # np.savetxt('output.csv', self.map.data, delimiter=",")
+                
+                # read in the csv file with the occupancy grid data
+
                 # # restructure the map into a 2D array
                 # reshaped_map = np.array(self.map.data).reshape((self.map.info.height, self.map.info.width))
 
@@ -1313,7 +1415,37 @@ class UberEatsCar:
                 # distance = 6
 
                 # # Create a copy of the original occupancy grid.
-                # new_grid = np.copy(reshaped_map)
+                data = []
+                with open('output.csv', 'r') as csvfile: 
+                    reader = csv.reader(csvfile, delimiter=',') 
+                    for row in reader:
+                        data.append(int(float(row[0])))
+
+                reshaped_data = np.array(data, dtype = int).reshape((400, 400))
+
+                self.map = OccupancyGrid()
+                self.map.header.frame_id = "/robot_0/odom"
+                self.map.header.stamp = rospy.Time.now()
+                self.map.info.resolution = self.resolution
+                self.map.info.height = self.height
+                self.map.info.width = self.width
+
+                self.map.info.origin.position.x = ORIGIN[0]
+                self.map.info.origin.position.y = ORIGIN[1]
+                self.map.info.origin.position.z = 0
+                self.map.info.origin.orientation.x = 0
+                self.map.info.origin.orientation.y = 0
+                self.map.info.origin.orientation.z = 0
+                self.map.info.origin.orientation.w = 0
+
+                self.map.data = np.ndarray.tolist(reshaped_data.flatten())
+
+                # Initial publish
+                self.map_pub.publish(self.map)
+
+                # # add data to list or other data structure
+                # new_data_grid = np.copy(reshaped_data)
+
 
                 # # Iterate over each cell in the occupancy grid.
                 # for i in range(reshaped_map.shape[0]):
@@ -1329,20 +1461,285 @@ class UberEatsCar:
                 #                             new_grid[i][j] = 100
                 #                             break
 
-                # # solve traveling salesman problem  
-                # _, _, path = TSP.determine_sequence(self.customers, new_grid)
-                # for point in path:
-                #     self.move_to(point[0] * self.resolution, point[1] * self.resolution)
+                # solve traveling salesman problem  
+                _, target_order, path = self.determine_sequence(self.customers, reshaped_data)
+                # print(target_order)
+                
+                for subpath in path:
+                    poses, steps = create_poses(subpath, RESOLUTION)
+                    self.publish_pose_array(poses)
+                    for point in subpath:
+                        print(point)
+                        self.move_to(int(point[0]) * self.resolution, int(point[1]) * self.resolution)
 
-                #     if point in self.customers:
-                #         self.customers.remove(point)
+                        if point in self.customers:
+                            self.customers.remove(point)
 
-                # # the robot is done once it reaches the final customer
-                # break
+                # the robot is done once it reaches the final customer
+                break
 
             rate.sleep()
 
- 
+    def expand_boundaries(self, robot_size, grid):
+            '''
+            Function that creates binary matrix of explorable cells, and expands size of obstacles
+            '''
+            rows = len(grid)
+            cols = len(grid[0])
+            # Initialize a map of the same size that can be fully explored 
+            binary_map = [[False for i in range(cols)] for j in range(rows)]
+            # Calculate the expansion factor
+            expand = SLACK
+
+            # Iterate through each cell
+            for r in range(rows):
+                for c in range(cols):
+                    # If there is an obstacle in the map
+                    if grid[r][c] != 0: 
+                        # Mark this cell as not explorable, and expand this by the appropriate factor
+                        binary_map[r][c] = True
+                        for v in range(1, expand+1):
+                            if r-v >= 0:
+                                binary_map[r-v][c] = True
+                            if r+v < rows:
+                                binary_map[r+v][c] = True
+                            if c-v >= 0:
+                                binary_map[r][c-v] = True
+                            if c+v < cols:
+                                binary_map[r][c+v] = True
+                            
+            return np.array(binary_map)
+
+    def validate(self, cell, visited):
+        '''
+        Function to validate if a cell can be visited
+        '''
+        row = cell[1]
+        col = cell[0]
+        rows = len(visited)
+        cols = len(visited[0])
+
+        # Check that the cell is in bounds
+        if (row < 0 or col < 0 or row >= rows or col >= cols):
+            return False
+        
+        # return visited[row][col] != 100
+
+        # If the cell is not explorable
+        if visited[row][col] == True:
+            print("cant visit")
+            return False
+
+        # Otherwise, it can be visited
+        return True
+
+    def find_a_star_path(self, grid, start, end):
+        '''
+        Function to find a path from the provided start and end using A*
+        '''
+        # 8 Possible row and column movements
+        dRow = [-1, 0, 0, 1, 1, 1, -1, -1]
+        dCol = [0, 1, -1, 0, 1, -1, -1, 1]
+
+        # Check that the start and goal are reachable
+        if self.validate(end, grid) == False:
+            print("goal in obstacle")
+            print(end)
+            exit("goal in obstacle")
+        if self.validate(start, grid) == False:
+            print("start in obstacle")
+            print(start)
+            exit("start in obstacle")
+
+        # Establish priority queue of nodes we will explore
+        frontier = Queue.PriorityQueue()
+        frontier.put((0, start))  # Add start node with priority 0
+
+        # Keep track of where a cell came from
+        cell_pointers = {}
+
+        # Keep track of the cost of reaching each node from the start
+        costs = {start: 0}
+
+        # Iterate through the possible nodes
+        while not frontier.empty():
+            _, current = frontier.get()
+
+            if current == end:
+                break
+
+            # Add applicable of the 8 surrounding nodes, keep track of cell origins
+            for i in range(len(dRow)):
+                next = (current[0] + dCol[i], current[1] + dRow[i])
+                if self.validate(next, grid):
+                    new_cost = costs[current] + self.distance(current, next)
+                    if next not in costs or new_cost < costs[next]:
+                        costs[next] = new_cost
+                        priority = new_cost + self.heuristic(next, end)
+                        frontier.put((priority, next))
+                        cell_pointers[next] = current
+
+        # Backtrack through cell connections to find path
+        solution = []  # Stores the path between the nodes
+        dist = costs[end]  # Distance is the cost of reaching the end node
+        node = end
+        solution.append(node)
+        node = cell_pointers[node]
+        while node != start:
+            solution.append(node)
+            node = cell_pointers[node]
+        solution.append(start)
+        solution.reverse()
+
+        return dist, solution
+
+    def distance(self, pos1, pos2):
+        '''
+        Function to calculate the distance between two positions using Manhattan distance
+        '''
+        return math.sqrt(abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1]))
+
+    def heuristic(self, pos, goal):
+        '''
+        Heuristic function to estimate the cost of reaching the goal from a given position
+        In this case, we use the Manhattan distance as the heuristic.
+        '''
+        return self.distance(pos, goal)
+
+    def calc_distances(self, targets, grid): 
+        ''' 
+        Function that creates adjacency matrix for the target nodes 
+        based on the occupancy grid, using A* to find the shortest distance between each node.
+        '''
+        targets.insert(0, (int(self.xpos/RESOLUTION), int(self.ypos/RESOLUTION))) ## TODO: Replace with current pos.
+        # Initialize empty adjacency matrix
+        adjacency = np.zeros((len(targets), len(targets)))
+        indices = [i for i in range(len(targets))]
+        # Create map of reachable and unreachable positions
+        binary_map = self.expand_boundaries(ROBOT, grid)
+        # Store the paths between two positions
+        paths = {}
+        print(binary_map)
+
+        distance = 2
+
+        # Create a copy of the original occupancy grid.
+        new_grid_bomb = np.copy(grid)
+
+        # Iterate over each cell in the occupancy grid.
+        for i in range(new_grid_bomb.shape[0]):
+            for j in range(new_grid_bomb.shape[1]):
+                # If the cell is 0 and has a neighboring cell (representing and obstacle)
+                # within a set distance, set it to 100 (obstacle).
+                if new_grid_bomb[i][j] == 0:
+                    for k in range(-distance, distance + 1):
+                        for l in range(-distance, distance + 1):
+                            # Check the bounds of the occupancy grid.
+                            if i + k >= 0 and i + k < new_grid_bomb.shape[0] and j + l >= 0 and j + l < new_grid_bomb.shape[1]:
+                                if new_grid_bomb[i + k][j + l] == 100:
+                                    new_grid_bomb[i][j] = 100
+                                    break
+
+        # Go through all possible combinations of 2 targets
+        for start, end in list(itertools.combinations(indices, 2)):
+            map_use = binary_map.copy()
+            length, steps = astar(new_grid_bomb, targets[start], targets[end])
+
+            # # Find the bfs path and length between two spots
+            # steps = bfs(new_grid_bomb, targets[start], targets[end])
+            # length = len(steps)
+            # Store the sub paths and lengths
+            paths[(targets[start], targets[end])] = steps
+            paths[(targets[end], targets[start])] = steps[::-1]
+            adjacency[start][end], adjacency[end][start] = length, length
+
+        return adjacency, paths
+
+    def determine_sequence(self, targets, grid):
+        '''
+        Function to determine the sequence in which to visit the targets
+        '''
+        # Assemble the distance adjacency matrix, and store the paths between individual targets
+        dists, subpaths = self.calc_distances(targets, grid)
+        print(dists)
+
+        # Perform held_karp algorithm to minimize total distance
+        time, path = self.held_karp(dists)
+
+        # Put together the full path by combining 
+        # the sub paths between the individual targets
+        total_path = []
+        for i in range(len(path) - 1):
+            start = path[i]
+            end = path[i+1]
+            total_path.append(subpaths[(targets[start], targets[end])])
+
+        return time, path, total_path
+
+    def held_karp(self, dists):
+        """
+        Implementation of Held-Karp, an algorithm that solves the Traveling
+        Salesman Problem using dynamic programming with memoization.
+
+        Parameters:
+            dists: distance matrix
+
+        Returns:
+            A tuple, (cost, path).
+        """
+        n = len(dists)
+
+        # Maps each subset of the nodes to the cost to reach that subset, as well
+        # as what node it passed before reaching this subset.
+        # Node subsets are represented as set bits.
+        C = {}
+
+        # Set transition cost from initial state
+        for k in range(1, n):
+            C[(1 << k, k)] = (dists[0][k], 0)
+
+        # Iterate subsets of increasing length and store intermediate results
+        # in classic dynamic programming manner
+        for subset_size in range(2, n):
+            for subset in itertools.combinations(range(1, n), subset_size):
+                # Set bits for all nodes in this subset
+                bits = 0
+                for bit in subset:
+                    bits |= 1 << bit
+
+                # Find the lowest cost to get to this subset
+                for k in subset:
+                    prev = bits & ~(1 << k)
+
+                    res = []
+                    for m in subset:
+                        if m == 0 or m == k:
+                            continue
+                        res.append((C[(prev, m)][0] + dists[m][k], m))
+                    C[(bits, k)] = min(res)
+
+        # We're interested in all bits but the least significant (the start state)
+        bits = (2**n - 1) - 1
+
+        # Calculate optimal cost
+        res = []
+        for k in range(1, n):
+            res.append((C[(bits, k)][0] , k))
+        opt, parent = min(res)
+
+        # Backtrack to find full path
+        path = []
+        for _ in range(n - 1):
+            path.append(parent)
+            new_bits = bits & ~(1 << parent)
+            __, parent = C[(bits, parent)]
+            bits = new_bits
+        
+        path.append(0)
+
+        return opt, list(reversed(path))
+
+
 def main():
     """Main Function."""
 
@@ -1351,7 +1748,7 @@ def main():
 
     # Initialization of the class for the uber eats car
     uber_eats_car = UberEatsCar()
-    nonstatic_obstacle1 = NonstaticObstacle()
+    nonstatic_obstacle1 = NonstaticObstacle(1)
 
     # Sleep for a few seconds to wait for the registration
     rospy.sleep(3)

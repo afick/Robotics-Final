@@ -26,8 +26,4 @@ define rosbot position
   laser_return 1
   
   lidar(pose [ 0.0 0.0 -0.1 0.0 ])
-
-
-
-
 )

@@ -29,8 +29,8 @@ window
 
 floorplan
 (
-  name "maze"
-  bitmap "maze.png"
+  name "newmaze"
+  bitmap "newmaze.png"
   size [ 10.0 10.0 2.0 ]
   pose [  5.0  5.0 0.0 0.0 ]
 )
@@ -46,7 +46,7 @@ rosbot
 # throw in a second robot
 rosbot
 (
-  pose [ 3.0 3.0 0.0 0.0 ]
+  pose [ -1.0 -1.0 0.0 0.0 ]
   name "rosbot2"
   color "blue"
 )
