@@ -77,38 +77,7 @@ MIN_CHECKPOINT = 3
 FINALLY_DONE = False
 
 
-### CARTER ###
-# READ CSV
 
-# # Import Relevant Libraries (Python Modules)
-# import csv
-
-# results = []
-
-# # Read the CSV file into an array.
-# with open("data.csv") as file:
-#     reader = csv.reader(file, quoting = csv.QUOTE_NONNUMERIC) # Constants - Floats
-#     for row in reader:
-#         results.append(row)
-
-# # Redefine the elements of the array.
-# for i in range(len(results)):
-#     for j in range(len(results[0])):
-#         if results[i][j] == -1:
-#             results[i][j] = -100
-
-# # Print the results.
-### CARTER ###
-
-### CARTER ###
-
-#     # Create adjacency matrix.
-#     # adjacency_matrix = [[len(bfs(data, (points[i][0], points[i][1]), (points[j][0], points[j][1]))) - 1 for j in range(len(points))] for i in range(len(points))]
-
-# if __name__ == "__main__":
-#     """Run the main function."""
-#     main()
-### CARTER ###
 
 def create_poses(path, res):
     '''
