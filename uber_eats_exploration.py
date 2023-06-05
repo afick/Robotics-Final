@@ -64,6 +64,10 @@ AVOID_ANGULAR_VELOCITY = math.pi / 2 #rad/s
 
 MIN_THRESHOLD_DISTANCE = 0.75
 
+ANGLE_TOLERANCE = 0.04
+DISTANCE_TOLERANCE = 0.12
+
+
 PADDING_DISTANCE = 5
 
 # Topic names
@@ -396,7 +400,7 @@ class fsm(Enum):
 
 class UberEatsCar:
 
-    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, resolution = RESOLUTION, width = WIDTH, height = HEIGHT, origin = ORIGIN, threshold = THRESHOLD, sample_size = THRESHOLD_SAMPLE_SIZE, customers = CUSTOMERS,  obstacle_check_angle = [MIN_OBSTACLE_CHECK_RAD, MAX_OBSTACLE_CHECK_RAD], goal_distance = GOAL_DISTANCE, avoid_linear_velocity=AVOID_LINEAR_VELOCITY, avoid_angular_velocity=AVOID_ANGULAR_VELOCITY, padding_distance=PADDING_DISTANCE):
+    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, resolution = RESOLUTION, width = WIDTH, height = HEIGHT, origin = ORIGIN, threshold = THRESHOLD, sample_size = THRESHOLD_SAMPLE_SIZE, customers = CUSTOMERS,  obstacle_check_angle = [MIN_OBSTACLE_CHECK_RAD, MAX_OBSTACLE_CHECK_RAD], goal_distance = GOAL_DISTANCE, avoid_linear_velocity=AVOID_LINEAR_VELOCITY, avoid_angular_velocity=AVOID_ANGULAR_VELOCITY, padding_distance=PADDING_DISTANCE, angle_tolerance=ANGLE_TOLERANCE, distance_tolerance=DISTANCE_TOLERANCE):
 
         # Setting up publishers and subscribers for the robot
         self.map_pub = rospy.Publisher(DEFAULT_MAP_TOPIC, OccupancyGrid, queue_size=1)
@@ -425,8 +429,8 @@ class UberEatsCar:
         # Store customer locations
         self.customers = customers
 
-        self.angle_tolerance = 0.04
-        self.distance_tolerance = 0.12
+        self.angle_tolerance = angle_tolerance
+        self.distance_tolerance = distance_tolerance
 
         #################### Occupancy Grid Mapping #########################
 
@@ -469,7 +473,7 @@ class UberEatsCar:
 
         self.obstacle_check_angle = obstacle_check_angle
         self.right_side_obstacle = True    # Determines whether robot should turn left or right to avoid
-        self.goal_distance = goal_distance     # checks
+        self.goal_distance = goal_distance    # Determines whether a robot should switch into avoid mode
         self.avoid_linear_velocity = avoid_linear_velocity
         self.avoid_angular_velocity = avoid_angular_velocity
 
