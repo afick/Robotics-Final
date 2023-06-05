@@ -62,7 +62,7 @@ GOAL_DISTANCE = 0.4
 AVOID_LINEAR_VELOCITY = 0.1 #m/s
 AVOID_ANGULAR_VELOCITY = 90 #rad/s
 
-MIN_THRESHOLD_DISTANCE = 0.5
+MIN_THRESHOLD_DISTANCE = 1
 
 # Topic names
 DEFAULT_CMD_VEL_TOPIC = "robot_0/cmd_vel"
@@ -100,8 +100,8 @@ def create_poses(path, res):
 
         # Create pose object and assign properties
         pose = Pose()
-        pose.position.x = x - 2.8
-        pose.position.y = y - 2.8
+        pose.position.x = x - 2.7
+        pose.position.y = y - 2.7
         quaternion = tf.transformations.quaternion_from_euler(0, 0, angle)
         pose.orientation.x = quaternion[0]
         pose.orientation.y = quaternion[1]
@@ -158,7 +158,7 @@ def astar(map, start_point, end_point):
                 shortest_path.append(current)
                 current = visited[current]
             shortest_path.reverse()  # Reverse the path to get it from start to end
-            return shortest_path, current_g_score
+            return shortest_path, len(shortest_path)
 
         adjacent_points = []
         current_col, current_row = current
@@ -586,7 +586,7 @@ class UberEatsCar:
         self.map.info.origin.orientation.w = 0
 
         self.map.data = [-1] * self.width * self.height
-
+        self.griddata = np.array([-1] * self.width * self.height).reshape(400, 400)
         # Initial publish
         self.map_pub.publish(self.map)
 
@@ -596,6 +596,7 @@ class UberEatsCar:
 
         self.shortest_path = None
         self.rotating_now = False
+        self.next_goal = None
         self.still_exploring = True
 
         #################### PD Controller Variables ######################
@@ -954,12 +955,15 @@ class UberEatsCar:
 
                 # FIXME: change 400 to self.width and self.height
                 for index in range(400 * 400):
-                    if self.occupied[index] * 2.4 > self.not_occupied[index]:
+                    if self.occupied[index] * 3.3 > self.not_occupied[index]:
                         self.map.data[index] = 100
+                        self.griddata[int(index/400)][int(index%400)] = 100
                     elif self.occupied[index] == 0 and self.not_occupied[index] == 0:
                         self.map.data[index] = -1
+                        self.griddata[int(index/400)][int(index%400)] = -1
                     else:
                         self.map.data[index] = 0
+                        self.griddata[int(index/400)][int(index%400)] = 0
 
                 # Publish the map information/data to the appropriate topic.
                 self.map_pub.publish(self.map)
@@ -996,7 +1000,7 @@ class UberEatsCar:
         # Initialize a map of the same size that can be fully explored 
         newmap = grid.copy()
         # Calculate the expansion factor
-        expand = int(1)  ## FIXME
+        expand = int(0)  ## FIXME
 
         # Iterate through each cell
         for r in range(rows):
@@ -1270,6 +1274,10 @@ class UberEatsCar:
                 for point in self.shortest_path:
                     # print(point)
                     self.move_to(point[0] * self.resolution, point[1] * self.resolution)
+                    if self.next_goal is not None:
+                        if self.griddata[self.next_goal[1]][self.next_goal[0]] == 100:
+                            self.stop()
+                            self.fsm = fsm.EXPLORE_FRONTIER
                 
                 self.fsm = fsm.EXPLORE_FRONTIER
 
@@ -1327,8 +1335,8 @@ class UberEatsCar:
                         csvWriter.writerows(reshaped_map)
                 
                     my_csv.close()
-
-                    frontier_points = self.frontier_exploration(new_grid)
+                    use = self.expand_boundaries(new_grid)
+                    frontier_points = self.frontier_exploration(use)
 
                     print(frontier_points)
 
@@ -1346,8 +1354,8 @@ class UberEatsCar:
                             # for j in range(len(points)):
                             #     if i != j:
                                 # FIXME - ADD PADDING
-                                use = self.expand_boundaries(new_grid)
-                                new_path = bfs(use, (int((self.xpos) * 20), int((self.ypos) * 20)), (int(points[i][0]), int(points[i][1])))
+                                print(use[int(points[i][1])][int(points[i][0])])
+                                new_path, length = astar(use, (int((self.xpos) * 20), int((self.ypos) * 20)), (int(points[i][0]), int(points[i][1])))
                                 
                                 # print(new_path)
                                 # new_path = BFS_Class.BFS(new_grid, (points[i][0], points[i][1]), (points[j][0], points[j][1]))
@@ -1360,8 +1368,9 @@ class UberEatsCar:
                                 #     print("ERROR ERROR")
                                 # print("PATH")
                                 # print(new_path)
-            
+                        
                                 if len(new_path) < len(self.shortest_path):
+                                    self.next_goal = (int(points[i][0]), int(points[i][1]))
                                     self.shortest_path = new_path
                         
                         poses, steps = create_poses(self.shortest_path, RESOLUTION)
@@ -1407,7 +1416,7 @@ class UberEatsCar:
 
                 # # FIXME
                 # distance = 6
-
+                break
                 # # Create a copy of the original occupancy grid.
                 data = []
                 with open('output.csv', 'r') as csvfile: 
