@@ -904,10 +904,13 @@ class UberEatsCar:
                             
                         use = self.expand_boundaries(new_grid)
                         new_path, length = astar(use, (int((self.xpos) * 20), int((self.ypos) * 20)), (int(points[i][0]), int(points[i][1])))
-    
-                        if len(new_path) < len(self.shortest_path):
-                            self.next_goal = (int(points[i][0]), int(points[i][1]))
-                            self.shortest_path = new_path
+
+                        if new_path == None:
+                            continue
+                        else:
+                            if len(new_path) < len(self.shortest_path):
+                                self.next_goal = (int(points[i][0]), int(points[i][1]))
+                                self.shortest_path = new_path
                     
                     poses, steps = create_poses(self.shortest_path, self.resolution)
                     
