@@ -38,7 +38,7 @@ floorplan
 # throw in main robot
 rosbot
 (
-  pose [ 2.0 2.0 0.0 0.0 ]
+  pose [ 2.8 2.2 0.0 0.0 ]
   name "rosbot"
   color "black"
 )
