@@ -53,7 +53,7 @@ HEIGHT = 400
 WIDTH = 400
 SLACK = 4
 
-THRESHOLD = 0.3 # threshold probability to declare a cell with an obstacle
+THRESHOLD = 3.6 # threshold probability/odds to declare a cell with an obstacle
 THRESHOLD_SAMPLE_SIZE = 600 # threshold sample size where observations are finalized
 
 MIN_OBSTACLE_CHECK_RAD = -20.0 / 180 * math.pi
@@ -62,7 +62,9 @@ GOAL_DISTANCE = 0.4
 AVOID_LINEAR_VELOCITY = 0.03 #m/s
 AVOID_ANGULAR_VELOCITY = math.pi / 2 #rad/s
 
-MIN_THRESHOLD_DISTANCE = 1
+MIN_THRESHOLD_DISTANCE = 0.75
+
+PADDING_DISTANCE = 5
 
 # Topic names
 DEFAULT_CMD_VEL_TOPIC = "robot_0/cmd_vel"
@@ -73,8 +75,6 @@ DEFAULT_MAP_TOPIC = "map"
 # (int((2 + 3) / RESOLUTION), int((4 + 3) / RESOLUTION)), (int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), 
 CUSTOMERS = [(int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION))]
 MIN_CHECKPOINT = 3
-
-FINALLY_DONE = False
 
 def create_poses(path, res):
     '''
@@ -158,6 +158,7 @@ def astar(map, start_point, end_point):
                 shortest_path.append(current)
                 current = visited[current]
             shortest_path.reverse()  # Reverse the path to get it from start to end
+            return shortest_path, len(shortest_path)
             return shortest_path, len(shortest_path)
 
         adjacent_points = []
@@ -362,8 +363,6 @@ class NonstaticObstacle:
             # Otherwise, the robot should rotate for a random amount of time
             # after which the flag is set again to False.
             # Use the function move already implemented, passing the default velocities saved in the corresponding class members.
-
-            ####### TODO: ANSWER CODE BEGIN #######
             
             if not self._close_obstacle:
 
@@ -385,8 +384,6 @@ class NonstaticObstacle:
 
                 self._close_obstacle = False    # Unset the flag when done rotating
 
-            ####### ANSWER CODE END #######
-
             rate.sleep()
 
 class fsm(Enum):
@@ -399,7 +396,7 @@ class fsm(Enum):
 
 class UberEatsCar:
 
-    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, resolution = RESOLUTION, width = WIDTH, height = HEIGHT, origin = ORIGIN, threshold = THRESHOLD, sample_size = THRESHOLD_SAMPLE_SIZE, customers = CUSTOMERS,  obstacle_check_angle = [MIN_OBSTACLE_CHECK_RAD, MAX_OBSTACLE_CHECK_RAD], goal_distance = GOAL_DISTANCE, avoid_linear_velocity=AVOID_LINEAR_VELOCITY, avoid_angular_velocity=AVOID_ANGULAR_VELOCITY):
+    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, resolution = RESOLUTION, width = WIDTH, height = HEIGHT, origin = ORIGIN, threshold = THRESHOLD, sample_size = THRESHOLD_SAMPLE_SIZE, customers = CUSTOMERS,  obstacle_check_angle = [MIN_OBSTACLE_CHECK_RAD, MAX_OBSTACLE_CHECK_RAD], goal_distance = GOAL_DISTANCE, avoid_linear_velocity=AVOID_LINEAR_VELOCITY, avoid_angular_velocity=AVOID_ANGULAR_VELOCITY, padding_distance=PADDING_DISTANCE):
 
         # Setting up publishers and subscribers for the robot
         self.map_pub = rospy.Publisher(DEFAULT_MAP_TOPIC, OccupancyGrid, queue_size=1)
@@ -415,6 +412,7 @@ class UberEatsCar:
         self.angular_velocity = angular_velocity
         self.threshold = threshold
         self.sample_size = sample_size
+        self.padding_distance = padding_distance
 
         # Robot location
         self.xpos = 0
@@ -423,9 +421,6 @@ class UberEatsCar:
 
         # Robot state
         self.fsm = fsm.EXPLORE_FRONTIER
-
-        self.occupied = [0 for _ in range(400 * 400)]
-        self.not_occupied = [0 for _ in range(400 * 400)]
 
         # Store customer locations
         self.customers = customers
@@ -456,14 +451,14 @@ class UberEatsCar:
         self.map.info.origin.orientation.w = 0
 
         self.map.data = [-1] * self.width * self.height
-        self.griddata = np.array([-1] * self.width * self.height).reshape(400, 400)
+        self.griddata = np.array([-1] * self.width * self.height).reshape(self.width, self.height)
 
         # Initial publish
         self.map_pub.publish(self.map)
 
         # Keep track of cell reading history in order to discriminate between occupied/free
-        # Each cell has a 2 element array (unoccupied, occupied) counter
-        self.cell_history = [[0, 0] for _ in range(self.width * self.height)]
+        self.occupied = [0 for _ in range(self.width * self.height)]
+        self.not_occupied = [0 for _ in range(self.width * self.height)]
 
         self.shortest_path = None
         self.rotating_now = False
@@ -474,7 +469,6 @@ class UberEatsCar:
 
         self.obstacle_check_angle = obstacle_check_angle
         self.right_side_obstacle = True    # Determines whether robot should turn left or right to avoid
-        self.error = 0     # Scales the urgency at which the robot should turn
         self.goal_distance = goal_distance     # checks
         self.avoid_linear_velocity = avoid_linear_velocity
         self.avoid_angular_velocity = avoid_angular_velocity
@@ -505,124 +499,10 @@ class UberEatsCar:
         
         self.pose_pub.publish(pose_msg)
         
-    ######################### Static/Nonstatic Mapping #########################
-
-    def update_history(self, ray, endpoint):
-        """Updates the cell histories based on the laser sensor readings"""
-
-        for x, y in ray:
-            index = y * self.width + x
-            self.cell_history[index][0] += 1
-        
-        if 0 <= endpoint[0] < self.width and 0 <= endpoint[1] < self.height:
-            index = endpoint[1] * self.width + endpoint[0]
-            self.cell_history[index][1] += 1
-
-    def update_grid(self):
-        """Updates the occupancy grid based on the updated cell histories"""
-
-        for i in range(len(self.cell_history)):
-            if self.cell_history[i] != [0, 0]:
-                occupied_probability = self.cell_history[i][1] / (self.cell_history[i][0] + self.cell_history[i][1]) 
-                if occupied_probability >= self.threshold:
-                    self.map.data[i] = 100
-                else:
-                    self.map.data[i] = 0
-
-    def bresenham(self, x0, y0, x1, y1):
-        """Raytracing algorithm"""
-
-        dx = abs(x1 - x0)
-        dy = abs(y1 - y0)
-
-        # calculations should be based on the relative locations of the start and end points
-        if dx > dy:
-            if x0 > x1:
-                ray = self.unsteepTrace(x1, y1, x0, y0)
-            else:
-                ray = self.unsteepTrace(x0, y0, x1, y1)
-        else:
-            if y0 > y1:
-                ray = self.steepTrace(x1, y1, x0, y0)
-            else:
-                ray = self.steepTrace(x0, y0, x1, y1)
-
-        return ray
-
-    def steepTrace(self, x0, y0, x1, y1):
-        """Helper method for the Bresenham algorithm if the ray is steep"""
-
-        points = list()
-
-        dx = x1 - x0
-        dy = y1 - y0
-
-        if dx >= 0:
-            x_increment = 1
-        else:
-            x_increment = -1
-            dx = x0 - x1
-        
-        # helps determine whether next cell should be adjacent or diagonal
-        d = 2 * dx - dy
-
-        x = x0
-
-        # loop through the y coordinates of the ray going from x0 to x1
-        for y in range(y0, y1):
-
-            if 0 <= x < self.width and 0 <= y < self.height:
-                points.append((x, y))
-
-            # if d exceeds 0, then increase x coordinate of next cell
-            if d > 0:
-                x += x_increment
-                d += 2 * (dx - dy)
-            else:
-                d += 2 * dx
-
-        return points
-
-    def unsteepTrace(self, x0, y0, x1, y1):
-        """Helper method for the Bresenham algorithm if the ray is not steep"""
-
-        points = list()
-
-        dx = x1 - x0
-        dy = y1 - y0
-        
-        if dy >= 0:
-            y_increment = 1
-        else:
-            y_increment = -1
-            dy = y0 - y1
-
-        # helps determine whether next cell should be adjacent or diagonal
-        d = 2 * dy - dx
-        
-        y = y0
-
-        # loop through the x coordinates of the ray going from x0 to x1
-        for x in range(x0, x1):
-
-            if 0 <= x < self.width and 0 <= y < self.height:
-                points.append((x, y))
-
-            # if d exceeds 0, then increase y coordinate of next cell
-            if d > 0:
-                y += y_increment
-                d += 2 * (dy - dx)
-            else:
-                d += 2 * dy
-
-        return points
-
-
     #################### Processing Laser Scan Data #####################
 
     def laser_callback(self, msg):
         """Processing of laser message."""
-        ### CARTER ###
         
         min_index = max(int((self.obstacle_check_angle[0] - msg.angle_min) / msg.angle_increment), 0)
         max_index = min(int((self.obstacle_check_angle[1] - msg.angle_min) / msg.angle_increment), len(msg.ranges) - 1)
@@ -647,10 +527,8 @@ class UberEatsCar:
         # Calculate the error, which is the difference between the current distance and the goal distance.
         if min_distance < self.goal_distance:
             print("OBSTACLE DETECTED")
-            self.error = min_distance - self.goal_distance
             self.fsm = fsm.AVOID
-        
-        ### CARTER ###
+       
         if self.still_exploring and not self.rotating_now:
             """Processing of laser message."""
             # Access to the index of the measurement in front of the robot.
@@ -686,10 +564,6 @@ class UberEatsCar:
                             # Determine the appropriate index for the array.
                             index = y_grid * self.width + x_grid
 
-                            # Check to make sure the grid point was not already marked as an obstacle.
-                            # FIXME
-                            # if self.map.data[index] != 100:
-                                # self.map.data[index] = 0
                             self.not_occupied[index] += 1
 
                     # Calculate the position of the obstacle, according to the 'odom' reference frame.
@@ -707,17 +581,17 @@ class UberEatsCar:
                         index = y_grid * self.width + x_grid
                         self.occupied[index] += 1
 
-                # FIXME: change 400 to self.width and self.height
-                for index in range(400 * 400):
-                    if self.occupied[index] * 3.3 > self.not_occupied[index]:
+                for index in range(self.width * self.height):
+                    
+                    if self.occupied[index] * self.threshold > self.not_occupied[index]:
                         self.map.data[index] = 100
-                        self.griddata[int(index/400)][int(index%400)] = 100
+                        self.griddata[int(index/self.height)][int(index%self.width)] = 100
                     elif self.occupied[index] == 0 and self.not_occupied[index] == 0:
                         self.map.data[index] = -1
-                        self.griddata[int(index/400)][int(index%400)] = -1
+                        self.griddata[int(index/self.height)][int(index%self.width)] = -1
                     else:
                         self.map.data[index] = 0
-                        self.griddata[int(index/400)][int(index%400)] = 0
+                        self.griddata[int(index/self.height)][int(index%self.width)] = 0
 
                 # Publish the map information/data to the appropriate topic.
                 self.map_pub.publish(self.map)
@@ -754,7 +628,7 @@ class UberEatsCar:
         # Initialize a map of the same size that can be fully explored 
         newmap = grid.copy()
         # Calculate the expansion factor
-        expand = int(0)  ## FIXME
+        expand = int(0)
 
         # Iterate through each cell
         for r in range(rows):
@@ -820,7 +694,7 @@ class UberEatsCar:
             distance = math.sqrt(x_distance ** 2 + y_distance ** 2)
         
         self.stop()
-    
+
     def stop(self):
         """Stop the robot."""
         twist_msg = Twist()
@@ -937,8 +811,6 @@ class UberEatsCar:
             # Minimum Region Size
             if len(region) > 10:
                 regions.append(region)
-        
-        # # # # #
 
         points = []
 
@@ -982,11 +854,10 @@ class UberEatsCar:
             elif self.fsm == fsm.EXPLORE_FRONTIER:
                 # restructure the map into a 2D array
                 reshaped_map = np.array(self.map.data).reshape((self.map.info.height, self.map.info.width))
-
                 
                 print("EF - MAP DONE")
                 
-                distance = 5
+                self.padding_distance = 5
 
                 # Create a copy of the original occupancy grid.
                 new_grid = np.copy(reshaped_map)
@@ -997,69 +868,63 @@ class UberEatsCar:
                         # If the cell is 0 and has a neighboring cell (representing and obstacle)
                         # within a set distance, set it to 100 (obstacle).
                         if reshaped_map[i][j] == 0:
-                            for k in range(-distance, distance + 1):
-                                for l in range(-distance, distance + 1):
+                            for k in range(-self.padding_distance, self.padding_distance + 1):
+                                for l in range(-self.padding_distance, self.padding_distance + 1):
                                     # Check the bounds of the occupancy grid.
                                     if i + k >= 0 and i + k < reshaped_map.shape[0] and j + l >= 0 and j + l < reshaped_map.shape[1]:
                                         if reshaped_map[i + k][j + l] == 100:
                                             new_grid[i][j] = 100
                                             break
                 
-                # if boolean_done:
-                #     self.fsm = fsm.COMPLETE
+                # find the optimal frontier exploration points
+
+                print("EF - FRONTIER POINTS")
                 
-                if not FINALLY_DONE:
-                    # find the optimal frontier exploration points
-
-                    print("EF - FRONTIER POINTS")
-                    
-                    with open("data_2.csv","w+") as my_csv:
-                        csvWriter = csv.writer(my_csv, delimiter=',')
-                        csvWriter.writerows(reshaped_map)
-                
-                    my_csv.close()
-                    use = self.expand_boundaries(new_grid)
-                    frontier_points = self.frontier_exploration(new_grid)
-
-                    print(frontier_points)
-
-                    if len(frontier_points) > 0:
-                        # pick the closest point 
-                        # Cast to integer values.
-                        points = [[round(i), round(j)] for [i, j] in frontier_points]
-
-                        # allocation of path memory 
-                        self.shortest_path = [[0 for _ in range(1000)] for _ in range(1000)]
-
-                        print("EF - PATH")
-
-                        for i in range(len(points)):
-                            # for j in range(len(points)):
-                            #     if i != j:
-                                # FIXME - ADD PADDING
-                                use = self.expand_boundaries(new_grid)
-                                new_path, length = astar(use, (int((self.xpos) * 20), int((self.ypos) * 20)), (int(points[i][0]), int(points[i][1])))
+                with open("data_2.csv","w+") as my_csv:
+                    csvWriter = csv.writer(my_csv, delimiter=',')
+                    csvWriter.writerows(reshaped_map)
             
-                                if len(new_path) < len(self.shortest_path):
-                                    self.next_goal = (int(points[i][0]), int(points[i][1]))
-                                    self.shortest_path = new_path
-                        
-                        poses, steps = create_poses(self.shortest_path, RESOLUTION)
-                        
-                        newposes = []
-                        for pose in poses:
-                            newpose = pose
-                            
-                            newpose.position.x = (pose.position.x / RESOLUTION - 5) * RESOLUTION
-                            newpose.position.y = (pose.position.y / RESOLUTION - 5) * RESOLUTION
-                            newposes.append(newpose)
-                    
-                        self.publish_pose_array(poses)
-                        self.publish_msg = True
+                my_csv.close()
+                use = self.expand_boundaries(new_grid)
+                frontier_points = self.frontier_exploration(new_grid)
 
-                        self.fsm = fsm.MOVE
-                    else:
-                        self.fsm = fsm.TSP
+                print(frontier_points)
+
+                if len(frontier_points) > 0:
+                    # pick the closest point 
+                    # Cast to integer values.
+                    points = [[round(i), round(j)] for [i, j] in frontier_points]
+
+                    # allocation of path memory 
+                    self.shortest_path = [[0 for _ in range(1000)] for _ in range(1000)]
+
+                    print("EF - PATH")
+
+                    for i in range(len(points)):
+                            
+                        use = self.expand_boundaries(new_grid)
+                        new_path, length = astar(use, (int((self.xpos) * 20), int((self.ypos) * 20)), (int(points[i][0]), int(points[i][1])))
+    
+                        if len(new_path) < len(self.shortest_path):
+                            self.next_goal = (int(points[i][0]), int(points[i][1]))
+                            self.shortest_path = new_path
+                    
+                    poses, steps = create_poses(self.shortest_path, self.resolution)
+                    
+                    newposes = []
+                    for pose in poses:
+                        newpose = pose
+                        
+                        newpose.position.x = (pose.position.x / self.resolution - 5) * self.resolution
+                        newpose.position.y = (pose.position.y / self.resolution - 5) * self.resolution
+                        newposes.append(newpose)
+                
+                    self.publish_pose_array(poses)
+                    self.publish_msg = True
+
+                    self.fsm = fsm.MOVE
+                else:
+                    self.fsm = fsm.TSP
 
             elif self.fsm == fsm.AVOID:
 
