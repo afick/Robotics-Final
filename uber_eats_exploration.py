@@ -100,8 +100,8 @@ def create_poses(path, res):
 
         # Create pose object and assign properties
         pose = Pose()
-        pose.position.x = x - 2.8
-        pose.position.y = y - 2.8
+        pose.position.x = x - (5 - 2.8) + 0.2
+        pose.position.y = y - (5 - 2.2) + 0.2
         quaternion = tf.transformations.quaternion_from_euler(0, 0, angle)
         pose.orientation.x = quaternion[0]
         pose.orientation.y = quaternion[1]
