@@ -60,7 +60,7 @@ DEFAULT_ODOM_TOPIC = "robot_0/odom"
 DEFAULT_SCAN_TOPIC = "robot_0/base_scan" # use scan for actual robot
 DEFAULT_MAP_TOPIC = "map"
 
-CUSTOMERS = [(int((6 + 3) / RESOLUTION), int((5 + 3) / RESOLUTION)), (int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), (int((2 + 3) / RESOLUTION), int((4 + 3) / RESOLUTION))]
+CUSTOMERS = [(int((6 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), (int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), (int((1 + 3) / RESOLUTION), int((4 + 3) / RESOLUTION)), (int((2 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION))]
 
 def create_poses(path, res):
     '''
@@ -539,7 +539,7 @@ class UberEatsCar:
         # Initialize a map of the same size that can be fully explored 
         newmap = grid.copy()
         # Set the expansion factor
-        expand = 6  
+        expand = 7
 
         # Iterate through each cell
         for r in range(rows):
