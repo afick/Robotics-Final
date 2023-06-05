@@ -10,4 +10,9 @@
 * output.csv - the .csv form of the fully mapped occupancy grid generated from uber_eats_exploration.py
 * uber_eats_TSP.py - the TSP module
 * newmaze.png - the testing environment
-* newmaze.world - the world file
+* newmaze.world - the world file for running exploration
+* newmazetsp.world - the world file for running tsp
+* All other files are auxiliary, can be ignored
+  
+**Usage**:
+Run the yaml, world, and appropriate script, depending on whether you want to run the exploration or the tsp.
