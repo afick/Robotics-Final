@@ -52,7 +52,12 @@ GOAL_DISTANCE = 0.4
 AVOID_LINEAR_VELOCITY = 0.1 #m/s
 AVOID_ANGULAR_VELOCITY = 90 #rad/s
 
+ANGLE_TOLERANCE = 0.04
+DISTANCE_TOLERANCE = 0.12
+
 MIN_THRESHOLD_DISTANCE = 1.0
+
+EXPANSION = 7
 
 # Topic names
 DEFAULT_CMD_VEL_TOPIC = "robot_0/cmd_vel"
@@ -60,7 +65,9 @@ DEFAULT_ODOM_TOPIC = "robot_0/odom"
 DEFAULT_SCAN_TOPIC = "robot_0/base_scan" # use scan for actual robot
 DEFAULT_MAP_TOPIC = "map"
 
-CUSTOMERS = [(int((6 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), (int((1 + 3) / RESOLUTION), int((1 + 3) / RESOLUTION)), (int((1 + 3) / RESOLUTION), int((4 + 3) / RESOLUTION)), (int((6 + 3) / RESOLUTION), int((5 + 3) / RESOLUTION))]
+# Customer Locations
+CUSTOMERS = [(6, 1), (1, 1), (1, 4), (6, 5)]
+
 
 def create_poses(path, res):
     '''
@@ -248,8 +255,6 @@ class NonstaticObstacle:
             # after which the flag is set again to False.
             # Use the function move already implemented, passing the default velocities saved in the corresponding class members.
 
-            ####### TODO: ANSWER CODE BEGIN #######
-            
             if not self._close_obstacle:
 
                 self.move(self.linear_velocity, 0)    # Translate the robot if it's not too close to an obstacle
@@ -270,8 +275,6 @@ class NonstaticObstacle:
 
                 self._close_obstacle = False    # Unset the flag when done rotating
 
-            ####### ANSWER CODE END #######
-
             rate.sleep()
 
 class fsm(Enum):
@@ -282,7 +285,7 @@ class fsm(Enum):
 
 class UberEatsCar:
 
-    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, resolution = RESOLUTION, width = WIDTH, height = HEIGHT, origin = ORIGIN, threshold = THRESHOLD, sample_size = THRESHOLD_SAMPLE_SIZE, customers = CUSTOMERS,  obstacle_check_angle = [MIN_OBSTACLE_CHECK_RAD, MAX_OBSTACLE_CHECK_RAD], goal_distance = GOAL_DISTANCE, avoid_linear_velocity=AVOID_LINEAR_VELOCITY, avoid_angular_velocity=AVOID_ANGULAR_VELOCITY):
+    def __init__(self, linear_velocity = LINEAR_VELOCITY, angular_velocity = ANGULAR_VELOCITY, resolution = RESOLUTION, width = WIDTH, height = HEIGHT, origin = ORIGIN, threshold = THRESHOLD, sample_size = THRESHOLD_SAMPLE_SIZE, customers = CUSTOMERS,  obstacle_check_angle = [MIN_OBSTACLE_CHECK_RAD, MAX_OBSTACLE_CHECK_RAD], goal_distance = GOAL_DISTANCE, avoid_linear_velocity=AVOID_LINEAR_VELOCITY, avoid_angular_velocity=AVOID_ANGULAR_VELOCITY, angle_tolerance=ANGLE_TOLERANCE, distance_tolerance=DISTANCE_TOLERANCE, expansion=EXPANSION):
 
         # Setting up publishers and subscribers for the robot
         self.map_pub = rospy.Publisher(DEFAULT_MAP_TOPIC, OccupancyGrid, queue_size=1)
@@ -307,14 +310,21 @@ class UberEatsCar:
         # Robot state
         self.fsm = fsm.TSP
 
-        self.occupied = [0 for _ in range(400 * 400)]
-        self.not_occupied = [0 for _ in range(400 * 400)]
+        self.occupied = [0 for _ in range(width * height)]
+        self.not_occupied = [0 for _ in range(width * height)]
 
         # Store customer locations
-        self.customers = customers
 
-        self.angle_tolerance = 0.04
-        self.distance_tolerance = 0.12
+        self.customers_global = customers
+        self.customers = list()
+        for customer in customers:
+            self.customers.append((int((customer[0] + 3) / resolution), int((customer[1] + 3) / resolution)))
+        # self.customers = customers
+
+        self.angle_tolerance = angle_tolerance
+        self.distance_tolerance = distance_tolerance
+
+        self.expansion = expansion  # set the expansion factor
 
         #################### Occupancy Grid Mapping #########################
 
@@ -354,12 +364,11 @@ class UberEatsCar:
         self.rotating_now = False
         self.still_exploring = True
 
-        #################### PD Controller Variables ######################
+        #################### Obstacle Avoidance Parameters ######################
 
         self.obstacle_check_angle = obstacle_check_angle
         self.right_side_obstacle = True    # Determines whether robot should turn left or right to avoid
-        self.error = 0     # Scales the urgency at which the robot should turn
-        self.goal_distance = goal_distance     # checks
+        self.goal_distance = goal_distance     # Determines whether robot should enter avoid mode
         self.avoid_linear_velocity = avoid_linear_velocity
         self.avoid_angular_velocity = avoid_angular_velocity
 
@@ -407,7 +416,6 @@ class UberEatsCar:
         # Calculate the error, which is the difference between the current distance and the goal distance.
         if min_distance < self.goal_distance:
             print("OBSTACLE DETECTED")
-            self.error = min_distance - self.goal_distance
             self.fsm = fsm.AVOID
 
     def publish_pose_array(self, poses):
@@ -511,13 +519,14 @@ class UberEatsCar:
                 self.map_pub.publish(self.map)
                 # solve traveling salesman problem  
                 _, target_order, path = self.determine_sequence(self.customers, self.reshaped_data)
-                print(self.customers)
+                print(self.customers_global)
                 print(target_order)
+                print("(0 in target order corresponds to user's starting location)")
                 # flatPath = [element for innerList in path for element in innerList]
                 # poses = create_poses(flatPath, RESOLUTION)
                 # self.publish_pose_array(poses)
                 for subpath in path:
-                    poses = create_poses(subpath, RESOLUTION)
+                    poses = create_poses(subpath, self.resolution)
                     self.publish_pose_array(poses)
                     for point in subpath:
                         self.move_to(int(point[0]) * self.resolution, int(point[1]) * self.resolution)
@@ -539,7 +548,7 @@ class UberEatsCar:
         # Initialize a map of the same size that can be fully explored 
         newmap = grid.copy()
         # Set the expansion factor
-        expand = 7
+        expand = self.expansion
 
         # Iterate through each cell
         for r in range(rows):
@@ -678,7 +687,7 @@ def main():
     nonstatic_obstacle1 = NonstaticObstacle(1)
 
     # Sleep for a few seconds to wait for the registration
-    rospy.sleep(3)
+    rospy.sleep(6)
 
     # If interrupted, send a stop command before interrupting
     rospy.on_shutdown(uber_eats_car.stop)
