@@ -11,6 +11,7 @@
 * uber_eats_TSP.py - the TSP module
 * newmaze.png - the testing environment
 * newmaze.world - the world file
+* Report.pdf - Write-up of our work on this project
 
 Other files were used mainly for testing purposes and are auxillary. Only the files that were listed here are important. 
 
