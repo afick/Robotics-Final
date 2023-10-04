@@ -29,8 +29,8 @@ window
 
 floorplan
 (
-  name "maze"
-  bitmap "maze.png"
+  name "newmaze"
+  bitmap "newmaze.png"
   size [ 10.0 10.0 2.0 ]
   pose [  5.0  5.0 0.0 0.0 ]
 )
@@ -38,7 +38,7 @@ floorplan
 # throw in main robot
 rosbot
 (
-  pose [ 2.0 2.0 0.0 0.0 ]
+  pose [ 2.8 2.2 0.0 0.0 ]
   name "rosbot"
   color "black"
 )
@@ -46,7 +46,23 @@ rosbot
 # throw in a second robot
 rosbot
 (
-  pose [ 3.0 3.0 0.0 0.0 ]
+  pose [ 4.5 5.0 0.0 0.0 ]
   name "rosbot2"
   color "blue"
+)
+
+# throw in a third robot
+rosbot
+(
+  pose [ 2.0 5.0 0.0 0.0 ]
+  name "rosbot3"
+  color "green"
+)
+
+# throw in a fourth robot
+rosbot
+(
+  pose [ 7.0 7.0 0.0 0.0 ]
+  name "rosbot4"
+  color "red"
 )

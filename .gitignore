@@ -5,3 +5,4 @@ __pycache__/
 
 # pyenv
 .python-version
+.DS_Store
